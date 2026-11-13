@@ -5,13 +5,14 @@ struct ContentView: View {
     var body: some View {
         ZStack{
             
+            NavigationStack {
+                            HomeView()
+                        }
+            
             Image("borda_tv")
                 .resizable()
-                .scaledToFill()
                 .ignoresSafeArea()
                 
-            Text("Hello, world!")
-                        .padding()
             
         }
         
