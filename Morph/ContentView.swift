@@ -3,8 +3,8 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        
         ZStack{
+            
             Image("borda_tv")
                 .resizable()
                 .scaledToFill()
@@ -12,6 +12,7 @@ struct ContentView: View {
                 
             Text("Hello, world!")
                         .padding()
+            
         }
         
     }
