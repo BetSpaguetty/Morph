@@ -7,7 +7,8 @@ struct ContentView: View {
         ZStack{
             Image("borda_tv")
                 .resizable()
-                .scaledToFit()
+                .scaledToFill()
+                .ignoresSafeArea()
                 
             Text("Hello, world!")
                         .padding()
