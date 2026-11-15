@@ -1,0 +1,27 @@
+# Normalização de fim de linha (evita falsos conflitos entre editores)
+* text=auto eol=lf
+
+# Arquivos Swift e Xcode
+*.swift text diff=swift
+*.plist text diff=xml
+*.pbxproj merge=union
+*.storyboard text diff=xml
+*.xib text diff=xml
+*.xcscheme text diff=xml
+*.entitlements text diff=xml
+*.md text
+
+# Arquivos binários e assets (Git não tenta fazer merge de texto)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.svg binary
+*.sks binary
+*.mp3 binary
+*.wav binary
+*.m4a binary
+*.ttf binary
+*.otf binary
+*.xcassets/** binary

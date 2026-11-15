@@ -1,0 +1,39 @@
+#!/bin/sh
+# Hook pre-commit do projeto Morph
+# Protege a branch 'main' e evita arquivos lixo do Xcode/macOS.
+
+set -e
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+# 1. Bloqueia commit direto na branch principal (main)
+if [ "$branch" = "main" ]; then
+  echo "❌ [Morph] Não é permitido commitar direto na branch 'main'."
+  echo "👉 Crie ou volte para sua branch de trabalho:"
+  echo "   git checkout -b func/nome-da-tarefa"
+  exit 1
+fi
+
+# 2. Bloqueia arquivos temporários do macOS/Xcode caso alguém use 'git add -f'
+bad_files=$(git diff --cached --name-only | grep -E '(\.DS_Store|xcuserdata|DerivedData)' || true)
+if [ -n "$bad_files" ]; then
+  echo "❌ [Morph] Arquivos de sistema/usuário detectados no commit:"
+  echo "$bad_files"
+  echo "👉 Remova-os com: git reset HEAD <arquivo>"
+  exit 1
+fi
+
+# 3. Protege contra alteração acidental do DEVELOPMENT_TEAM no Xcode
+if git diff --cached --name-only | grep -q 'Morph\.xcodeproj/project\.pbxproj'; then
+  if git diff --cached Morph.xcodeproj/project.pbxproj | grep -qE '^\+.*DEVELOPMENT_TEAM'; then
+    if [ "${ALLOW_PBXPROJ_TEAM:-0}" != "1" ]; then
+      echo "❌ [Morph] O Xcode alterou o 'DEVELOPMENT_TEAM' no project.pbxproj."
+      echo "   Isso causa conflito entre as contas Apple da equipe."
+      echo "👉 Desfaça apenas isso com: git checkout -- Morph.xcodeproj/project.pbxproj"
+      echo "   (Se for intencional para toda a equipe: ALLOW_PBXPROJ_TEAM=1 git commit ...)"
+      exit 1
+    fi
+  fi
+fi
+
+exit 0

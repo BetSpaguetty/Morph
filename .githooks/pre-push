@@ -1,0 +1,17 @@
+#!/bin/sh
+# Hook pre-push do projeto Morph
+# Impede push acidental direto na branch 'main'.
+# Tudo deve ir primeiro para 'develop' e só depois da 'develop' para 'main'.
+
+set -e
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ] && [ "${ALLOW_MAIN_PUSH:-0}" != "1" ]; then
+    echo "❌ [Morph] Push direto para a 'main' está bloqueado para evitar quebras."
+    echo "👉 Envie suas alterações para a sua branch ou para a 'develop'."
+    echo "   (Para subir 'develop' -> 'main' pelo terminal: ALLOW_MAIN_PUSH=1 git push origin main)"
+    exit 1
+  fi
+done
+
+exit 0
