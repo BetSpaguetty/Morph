@@ -13,17 +13,10 @@ struct HomeView: View {
     private let logoHalationColor = Color(red: 0.345, green: 0.286, blue: 0.110) // #58491C
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack {
             ZStack {
-                // Halation sutil nas bordas dos caracteres para simular projeção no vidro iluminado
-                Image("logo_morph")
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(logoHalationColor.opacity(0.22))
-                    .blur(radius: 3.5)
-
                 // Preenchimento principal em marrom-oliva profundo mesclado ao fundo amarelado
+                
                 Image("logo_morph")
                     .renderingMode(.template)
                     .resizable()
@@ -37,9 +30,20 @@ struct HomeView: View {
                     )
                     .opacity(0.90)
             }
-            .frame(width: 500, height: 250)
+            .frame(width: 620, height: 200)
             .blendMode(.multiply)
+            
+            Button {
+                // O que acontece quando clicar na imagem
+            } label: {
+                Image("botao_create")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 350, height: 100)
+            }
+            .buttonStyle(.plain)
         }
+        .blendMode(.multiply)
     }
 }
 
