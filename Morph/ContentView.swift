@@ -47,6 +47,7 @@ struct ContentView: View {
                     bleedCornerRadius: bleedCornerRadius
                 )
                 .offset(x: apertureOffsetX, y: apertureOffsetY)
+                
 
                 // CAMADA 2 (Frontal Independente): Moldura Externa da TV
                 Image("borda_tv")
@@ -129,9 +130,14 @@ struct ContentView: View {
                 .frame(width: apertureWidth * 1.03, height: apertureHeight * 1.03)
                 .blur(radius: minAperture * 0.048)
 
-            // 5. Conteúdo central da tela (Logo "MORPH." integrada ao fundo amarelado)
-            HomeView()
-                .frame(width: apertureWidth, height: apertureHeight)
+//            // 5. Conteúdo central da tela (Logo "MORPH." integrada ao fundo amarelado)
+//            HomeView()
+//                .frame(width: apertureWidth, height: apertureHeight)
+            // 5. Conteúdo central da tela com fluxo de navegação interno
+            NavigationStack {
+                            HomeView()
+                        }
+                        .frame(width: apertureWidth, height: apertureHeight)
         }
         .frame(width: bleedWidth, height: bleedHeight)
         .clipShape(RoundedRectangle(cornerRadius: bleedCornerRadius, style: .continuous))

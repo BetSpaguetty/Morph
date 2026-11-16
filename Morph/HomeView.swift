@@ -7,12 +7,15 @@
 import SwiftUI
 
 struct HomeView: View {
+    @State private var abrirEditor = false
     // Tom marrom-oliva profundo e quente para integrar a logo à iluminação amarelada da tela
     private let logoTopColor = Color(red: 0.235, green: 0.200, blue: 0.086)    // #3C3316
     private let logoBottomColor = Color(red: 0.180, green: 0.153, blue: 0.063) // #2E2710
     private let logoHalationColor = Color(red: 0.345, green: 0.286, blue: 0.110) // #58491C
+    
 
     var body: some View {
+    
         VStack {
             ZStack {
                 // Preenchimento principal em marrom-oliva profundo mesclado ao fundo amarelado
@@ -34,8 +37,8 @@ struct HomeView: View {
             .blendMode(.multiply)
             
             Button {
-                // O que acontece quando clicar na imagem
-            } label: {
+                    abrirEditor = true
+                    }label: {
                 Image("botao_create")
                     .resizable()
                     .scaledToFit()
@@ -43,7 +46,14 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .containerBackground(.clear, for: .navigation)
         .blendMode(.multiply)
+        
+        // Abre a TextView quando abrirEditor virar true
+        .navigationDestination(isPresented: $abrirEditor) {
+            TextView()
+            }
     }
 }
 
