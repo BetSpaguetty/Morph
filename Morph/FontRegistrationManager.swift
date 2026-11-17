@@ -176,7 +176,7 @@ final class FontRegistrationManager {
         // 4. Outros valores (-1, 0, +1, +2, +3): SF Padrão
         let extraStroke: CGFloat = clampedVol == 5 ? max(0.6, size * 0.018) : 0.0
         return ResolvedTypography(
-            font: .system(size: size, weight: swiftUIWeight, design: .default),
+            font: .system(size: size, weight: swiftUIWeight, design: .monospaced),
             fontSize: size,
             familyName: "SF Padrão",
             weightLabel: weightName,
