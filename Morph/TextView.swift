@@ -152,7 +152,7 @@ struct TextView: View {
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $texto)
                         .focused($editorFocused)
-                        .font(.system(size: 26, weight: .regular))
+                        .font(.system(size: 26, weight: .regular, design: .monospaced))
                         .foregroundStyle(.black.opacity(0.88))
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 28)
