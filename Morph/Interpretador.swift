@@ -173,11 +173,35 @@ final class Interpretador {
     var chaveGemini = UserDefaults.standard.string(forKey: "geminiAPIKey") ?? ""
     var modeloDoLote = ""
 
+    private static let chaveBuild: String = {
+        guard let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
+              let dict = NSDictionary(contentsOf: url) as? [String: Any],
+              let key = dict["GEMINI_API_KEY"] as? String else { return "" }
+        return key.trimmingCharacters(in: .whitespacesAndNewlines)
+    }()
+
+    var temChaveBuild: Bool { !Self.chaveBuild.isEmpty }
+
+    var usandoChaveBuild: Bool {
+        chaveGemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && temChaveBuild
+    }
+
+    private var chaveEfetiva: String {
+        let pessoal = chaveGemini.trimmingCharacters(in: .whitespacesAndNewlines)
+        return pessoal.isEmpty ? Self.chaveBuild : pessoal
+    }
+
     var configuracao: ConfiguracaoProvedor {
-        ConfiguracaoProvedor(modeloGemini: modeloGemini, chaveGemini: chaveGemini)
+        ConfiguracaoProvedor(modeloGemini: modeloGemini, chaveGemini: chaveEfetiva)
     }
 
     var indisponibilidade: String? { configuracao.indisponibilidade }
+
+    func usarChaveDaBuild() {
+        chaveGemini = ""
+        UserDefaults.standard.removeObject(forKey: "geminiAPIKey")
+        erro = nil
+    }
 
     private var jaExecutou = false
 

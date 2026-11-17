@@ -103,13 +103,33 @@ struct SettingsSheetView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
-                SecureField("Chave da API do Gemini", text: $interpretador.chaveGemini)
+                SecureField("Chave pessoal da API do Gemini (opcional)", text: $interpretador.chaveGemini)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onChange(of: interpretador.chaveGemini) { _, nova in
                         UserDefaults.standard.set(nova, forKey: "geminiAPIKey")
                     }
+
+                HStack(spacing: 8) {
+                    Button {
+                        interpretador.usarChaveDaBuild()
+                    } label: {
+                        Label(
+                            interpretador.usandoChaveBuild ? "Usando chave da build" : "Usar chave da API da build",
+                            systemImage: interpretador.usandoChaveBuild ? "checkmark.circle.fill" : "key.fill"
+                        )
+                        .font(FontRegistrationManager.chicago(size: 12))
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!interpretador.temChaveBuild || interpretador.usandoChaveBuild)
+
+                    if !interpretador.temChaveBuild {
+                        Text("Sem chave em Secrets.plist")
+                            .font(FontRegistrationManager.chicago(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 Text("Free tier: 3.5/3.1 Flash-Lite ~500 req/dia e 250K tokens/min.")
                     .font(FontRegistrationManager.chicago(size: 11))
