@@ -33,3 +33,7 @@ fastlane/test_output
 # Playgrounds
 timeline.xctimeline
 playground.xcworkspace
+
+# Chaves locais de API (nunca subir para o Git)
+Secrets.plist
+
