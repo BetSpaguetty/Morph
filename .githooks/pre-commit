@@ -14,12 +14,12 @@ if [ "$branch" = "main" ]; then
   exit 1
 fi
 
-# 2. Bloqueia arquivos temporários do macOS/Xcode caso alguém use 'git add -f'
-bad_files=$(git diff --cached --name-only | grep -E '(\.DS_Store|xcuserdata|DerivedData)' || true)
+# 2. Bloqueia arquivos temporários do macOS/Xcode e segredos locais caso alguém use 'git add -f'
+bad_files=$(git diff --cached --name-only | grep -E '(\.DS_Store|xcuserdata|DerivedData|Secrets\.plist)' || true)
 if [ -n "$bad_files" ]; then
-  echo "❌ [Morph] Arquivos de sistema/usuário detectados no commit:"
+  echo "❌ [Morph] Arquivo proibido/sensível detectado no commit:"
   echo "$bad_files"
-  echo "👉 Remova-os com: git reset HEAD <arquivo>"
+  echo "👉 Remova-o com: git reset HEAD <arquivo>"
   exit 1
 fi
 
