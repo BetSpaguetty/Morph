@@ -9,7 +9,7 @@ struct ContentView: View {
             ZStack {
                 Color.black
 
-                // Tela interna (fundo com sangria sob a moldura + navegação contida na abertura da TV)
+                // Tela interna (fundo com sangria + UI navegável + filtro CRT Metal sobre toda a tela)
                 ZStack {
                     screenBackground(for: geo.size)
 
@@ -17,6 +17,8 @@ struct ContentView: View {
                         HomeView()
                     }
                     .frame(width: geo.size.width * 0.826, height: geo.size.height * 0.815)
+
+                    CRTScreenFilterView(containerSize: geo.size)
                 }
                 .compositingGroup()
 
@@ -39,7 +41,6 @@ struct ContentView: View {
                     startRadiusFraction: 0.10,
                     endRadiusFraction: 0.45
                 )
-                .shadow(.inner(color: .black.opacity(0.12), radius: radius * 0.7))
             )
             .frame(width: size.width * 0.90, height: size.height * 0.90)
     }
