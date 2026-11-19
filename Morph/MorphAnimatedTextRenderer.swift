@@ -36,6 +36,8 @@ struct MorphWordsCanvasView: View {
             ForEach(Array(tokens.enumerated()), id: \.offset) { index, wordText in
                 let scores = scoresProvider(index)
                 let isSelected = (scope == .specificWord && index == selectedWordIndex)
+                let characterStartIndex = tokens.prefix(index).reduce(0) { $0 + $1.count } + index
+                let phraseCharacterCount = tokens.joined(separator: " ").count
 
                 MorphSingleWordView(
                     word: wordText,
@@ -46,6 +48,8 @@ struct MorphWordsCanvasView: View {
                     showWordSelectionHighlight: scope == .specificWord,
                     elapsedTime: elapsedTime,
                     isAndamentoPaused: isAndamentoPaused,
+                    characterStartIndex: characterStartIndex,
+                    phraseCharacterCount: phraseCharacterCount,
                     isolatedParameter: isolatedParameter,
                     onWhiteCanvas: onWhiteCanvas
                 )
@@ -75,6 +79,8 @@ struct MorphSingleWordView: View {
     let showWordSelectionHighlight: Bool
     let elapsedTime: TimeInterval
     let isAndamentoPaused: Bool
+    let characterStartIndex: Int
+    let phraseCharacterCount: Int
     let isolatedParameter: MorphParameter?
     var onWhiteCanvas: Bool = false
 
@@ -100,49 +106,11 @@ struct MorphSingleWordView: View {
         elapsedTime * speedMultiplier
     }
 
-    // MARK: 2. Andamento (-5 a +5) -> Duração da palavra surgindo e indo embora (a partir de +1)
+    // MARK: 2. Andamento (-5 a +5) -> Entrada speed dash por letra (a partir de +1)
     private var andamentoEnvelope: (opacity: Double, scaleOffset: CGFloat, yTransition: CGFloat) {
-        let andamento = scores[.andamento]
-        guard andamento >= 1, !isAndamentoPaused else {
-            return (1.0, 1.0, 0.0)
-        }
-
-        let cycleDuration: Double = {
-            switch andamento {
-            case 1:  return 4.20
-            case 2:  return 2.80
-            case 3:  return 1.80
-            case 4:  return 1.05
-            case 5:  return 0.55
-            default: return 2.80
-            }
-        }()
-
-        let wordPhaseOffset = Double(wordIndex) * 0.12
-        let t = (elapsedTime * speedMultiplier + wordPhaseOffset).truncatingRemainder(dividingBy: cycleDuration)
-        let normalized = max(0.0, min(1.0, t / cycleDuration))
-
-        if normalized < 0.35 {
-            let p = normalized / 0.35
-            let smooth = p * p * (3.0 - 2.0 * p)
-            return (
-                opacity: smooth,
-                scaleOffset: 0.86 + 0.14 * CGFloat(smooth),
-                yTransition: CGFloat((1.0 - smooth) * 14.0)
-            )
-        } else if normalized < 0.60 {
-            return (opacity: 1.0, scaleOffset: 1.0, yTransition: 0.0)
-        } else if normalized < 0.90 {
-            let p = (normalized - 0.60) / 0.30
-            let smooth = 1.0 - (p * p * (3.0 - 2.0 * p))
-            return (
-                opacity: smooth,
-                scaleOffset: 0.86 + 0.14 * CGFloat(smooth),
-                yTransition: CGFloat(-(1.0 - smooth) * 14.0)
-            )
-        } else {
-            return (opacity: 0.02, scaleOffset: 0.86, yTransition: 14.0)
-        }
+        // A entrada e a opacidade agora são calculadas por letra no speedDash.
+        // Andamento zero ou negativo mantém as palavras paradas.
+        (1.0, 1.0, 0.0)
     }
 
     // MARK: 3. Peso (-5 a +5) -> Leve (flutuar para o topo) / Pesado (afundar para a base)
@@ -279,6 +247,10 @@ struct MorphSingleWordView: View {
                     luzScore: luzScore,
                     ativacaoScore: scores[.ativacao],
                     isolatedParameter: isolatedParameter,
+                    andamentoScore: scores[.andamento],
+                    characterSequenceIndex: characterStartIndex + charIdx,
+                    phraseCharacterCount: phraseCharacterCount,
+                    isAndamentoPaused: isAndamentoPaused,
                     effectiveTime: effectiveTime
                 )
             }
@@ -289,13 +261,6 @@ struct MorphSingleWordView: View {
                 effectiveTime: effectiveTime,
                 wordSeed: wordIndex,
                 tintColor: tint
-            )
-        )
-        .modifier(
-            LightAndShadowModifier(
-                luzScore: luzScore,
-                baseColor: tint,
-                effectiveTime: effectiveTime
             )
         )
     }
@@ -354,7 +319,44 @@ struct MorphCharacterNodeView: View {
     let luzScore: Int
     let ativacaoScore: Int
     let isolatedParameter: MorphParameter?
+    let andamentoScore: Int
+    let characterSequenceIndex: Int
+    let phraseCharacterCount: Int
+    let isAndamentoPaused: Bool
     let effectiveTime: Double
+
+    private var speedDashState: (x: CGFloat, skew: CGFloat, opacity: Double) {
+        guard andamentoScore >= 1, !isAndamentoPaused else { return (0, 0, 1) }
+
+        // Mantém a sequência do HTML (50 ms entre letras e 2,5 s de pausa),
+        // acelerando a entrada conforme o nível de Andamento.
+        let duration: Double = [1: 1.25, 2: 1.0, 3: 0.75, 4: 0.6, 5: 0.5][andamentoScore] ?? 0.5
+        let stagger = 0.05
+        let cycle = Double(max(phraseCharacterCount, 1)) * stagger + duration + 2.5
+        let delayedTime = effectiveTime - Double(characterSequenceIndex) * stagger
+        guard delayedTime >= 0 else { return (-2, -.pi / 4, 0) }
+        let phase = delayedTime.truncatingRemainder(dividingBy: cycle)
+        guard phase < duration else { return (0, 0, 1) }
+
+        let progress = phase / duration
+        if progress < 0.7 {
+            let p = progress / 0.7
+            let eased = p * p * (3 - 2 * p)
+            return (
+                x: CGFloat(-2.0 + 2.1 * eased),
+                skew: CGFloat((-45.0 + 35.0 * eased) * .pi / 180.0),
+                opacity: min(1.0, p)
+            )
+        }
+
+        let p = (progress - 0.7) / 0.3
+        let eased = p * p * (3 - 2 * p)
+        return (
+            x: CGFloat(0.1 * (1 - eased)),
+            skew: CGFloat((-10.0 + 10.0 * eased) * .pi / 180.0),
+            opacity: 1.0
+        )
+    }
 
     private var fluidityWaveOffset: (dx: CGFloat, dy: CGFloat, rotation: Double) {
         guard fluidezScore >= 1 else { return (0, 0, 0) }
@@ -404,6 +406,7 @@ struct MorphCharacterNodeView: View {
         let wave = fluidityWaveOffset
         let charJitter = charTensionOffset
         let frag = characterFragmentationFade
+        let dash = speedDashState
         let str = String(character)
         let totalX: CGFloat = wave.dx + charJitter.dx
         let totalY: CGFloat = wave.dy + charJitter.dy + frag.scatterY + isolatedActivationWaveY
@@ -419,10 +422,35 @@ struct MorphCharacterNodeView: View {
             Text(str)
                 .font(typography.font)
                 .foregroundStyle(color)
+                .modifier(
+                                    LightAndShadowModifier(
+                                        luzScore: luzScore,
+                                        baseColor: color,
+                                        charIndex: charIndex,
+                                        totalChars: totalChars,
+                                        effectiveTime: effectiveTime
+                                    )
+                                )
+            
         }
         .opacity(frag.opacity)
         .rotationEffect(.degrees(wave.rotation))
         .offset(x: totalX, y: totalY)
+        .visualEffect { content, proxy in
+            content
+                .transformEffect(
+                    CGAffineTransform(
+                        a: 1,
+                        b: 0,
+                        c: CGFloat(tan(Double(dash.skew))),
+                        d: 1,
+                        tx: 0,
+                        ty: 0
+                    )
+                )
+                .offset(x: proxy.size.width * dash.x)
+                .opacity(dash.opacity)
+        }
     }
 }
 
@@ -510,27 +538,52 @@ struct GranulationFadeModifier: ViewModifier {
 struct LightAndShadowModifier: ViewModifier {
     let luzScore: Int
     let baseColor: Color
+    let charIndex: Int      // <-- argumento #3
+    let totalChars: Int     // <-- argumento #4
     let effectiveTime: Double
+
+    /// Reproduz o ciclo do `glowIn` do HTML: cada letra começa 50 ms depois,
+    /// brilha durante 1 s e aguarda 2,5 s antes de reiniciar a sequência.
+    private var glowIn: (opacity: Double, intensity: Double) {
+        let stagger = 0.05
+        let animationDuration = 1.0
+        let restDuration = 2.5
+        let cycleDuration = Double(max(totalChars, 1)) * stagger + animationDuration + restDuration
+        let delayedTime = effectiveTime - Double(charIndex) * stagger
+        guard delayedTime >= 0 else { return (0.0, 0.0) }
+        let localTime = delayedTime.truncatingRemainder(dividingBy: cycleDuration)
+        guard localTime < animationDuration else {
+            return (1.0, 0.0)
+        }
+
+        let progress = localTime / animationDuration
+        let opacity = min(1.0, progress * 2.0)
+        let intensity = progress <= 0.5
+            ? progress * 2.0
+            : (1.0 - progress) * 2.0
+        return (opacity, max(0.0, intensity))
+    }
 
     func body(content: Content) -> some View {
         if luzScore > 0 {
             let level = CGFloat(luzScore)
-            let pulse = 1.0 + 0.12 * CGFloat(sin(effectiveTime * 3.0))
-            let glowRadius1 = level * 3.2 * pulse
-            let glowRadius2 = level * 7.5 * pulse
+            let animation = glowIn
+            let glowRadius1 = level * 3.2 * CGFloat(animation.intensity)
+            let glowRadius2 = level * 7.5 * CGFloat(animation.intensity)
 
             content
                 .brightness(Double(luzScore) * 0.06)
+                .opacity(animation.opacity)
                 .shadow(
-                    color: Color(red: 1.0, green: 0.95, blue: 0.75).opacity(min(1.0, Double(luzScore) * 0.22)),
+                    color: Color(red: 1.0, green: 0.95, blue: 0.75).opacity(min(1.0, Double(luzScore) * 0.22) * animation.intensity),
                     radius: glowRadius1, x: 0, y: 0
                 )
                 .shadow(
-                    color: baseColor.opacity(min(0.95, Double(luzScore) * 0.18)),
+                    color: baseColor.opacity(min(0.95, Double(luzScore) * 0.18) * animation.intensity),
                     radius: glowRadius2, x: 0, y: 0
                 )
                 .shadow(
-                    color: Color.white.opacity(luzScore >= 4 ? Double(luzScore - 3) * 0.30 : 0.0),
+                    color: Color.white.opacity((luzScore >= 4 ? Double(luzScore - 3) * 0.30 : 0.0) * animation.intensity),
                     radius: level * 11.0, x: 0, y: 0
                 )
         } else if luzScore < 0 {
