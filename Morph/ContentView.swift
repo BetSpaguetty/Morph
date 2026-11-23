@@ -28,6 +28,7 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea()
+        .statusBarHidden(true)
     }
 
     private func screenBackground(for size: CGSize) -> some View {

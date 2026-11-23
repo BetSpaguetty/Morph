@@ -62,14 +62,37 @@ struct TextView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
+        GeometryReader { containerGeo in
+            let metrics = RetroFrameMetrics(containerSize: containerGeo.size)
 
-            ZStack(alignment: .bottom) {
-                canvasArea
-                bottomControls
+            VStack(spacing: 0) {
+                RetroHeaderBar(
+                    metrics: metrics,
+                    onHome: { dismiss() },
+                    onSettings: { showingSettingsSheet = true }
+                )
+
+                ZStack(alignment: .bottom) {
+                    canvasArea
+                    bottomControls
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerSize: metrics.cornerSize, style: .circular))
+            .overlay(
+                RetroWindowFrameShape(metrics: metrics)
+                    .stroke(
+                        RetroTerminalStyle.ink,
+                        style: StrokeStyle(
+                            lineWidth: metrics.lineWidth,
+                            lineCap: .round,
+                            lineJoin: .round
+                        )
+                    )
+                    .allowsHitTesting(false)
+            )
+            .padding(.horizontal, metrics.horizontalOuterPadding)
+            .padding(.vertical, metrics.verticalOuterPadding)
         }
         .toolbar(.hidden, for: .navigationBar)
         .containerBackground(.clear, for: .navigation)
@@ -98,50 +121,6 @@ struct TextView: View {
         .onChange(of: filtros.limiar) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarContradicoes) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarNaoLiterais) { _, _ in recomputarScoresPorPalavra() }
-    }
-
-    // MARK: - Barra Superior
-
-    private var topBar: some View {
-        HStack(spacing: 10) {
-            iconButton(systemName: "house.fill", label: "Início") {
-                dismiss()
-            }
-
-            Spacer()
-
-            if !texto.isEmpty {
-                Button(role: .destructive, action: apagarTudo) {
-                    Image(systemName: "trash")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.red)
-                        .frame(width: 38, height: 38)
-                        .background(Color.red.opacity(0.12), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Apagar texto")
-            }
-
-            iconButton(systemName: "gearshape.fill", label: "Ajustes") {
-                showingSettingsSheet = true
-            }
-        }
-        // Folga superior/lateral para não colidir com os cantos arredondados da moldura da TV
-        .padding(.horizontal, 28)
-        .padding(.top, 34)
-        .padding(.bottom, 6)
-    }
-
-    private func iconButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.black.opacity(0.85))
-                .frame(width: 38, height: 38)
-                .background(Color.black.opacity(0.08), in: Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
     }
 
     // MARK: - Área Central (Editor de Texto vs Palco de Animações)
