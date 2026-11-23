@@ -113,6 +113,7 @@ struct RetroHeaderBar: View {
     let metrics: RetroFrameMetrics
     var onHome: () -> Void
     var onSettings: () -> Void
+    var onTapEmptySpace: (() -> Void)? = nil
 
     private var iconSize: CGFloat { 20 * metrics.headerScale }
     private var buttonPadX: CGFloat { 6 * metrics.headerScale }
@@ -124,7 +125,10 @@ struct RetroHeaderBar: View {
                 headerIconButton(systemName: "gearshape", label: "Ajustes", action: onSettings)
             }
 
-            Spacer(minLength: 8)
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { onTapEmptySpace?() }
 
             HStack(spacing: 10 * metrics.headerScale) {
                 DeviceClockView(scale: metrics.headerScale)

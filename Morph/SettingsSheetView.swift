@@ -7,7 +7,6 @@ struct SettingsSheetView: View {
     @Binding var comEvidencia: Bool
     @Binding var deterministico: Bool
     @Binding var filtros: Filtros
-    @Binding var autoInterpretOnPause: Bool
 
     var onTriggerRun: (Int) -> Void
     var onSelectExample: (String) -> Void
@@ -134,11 +133,6 @@ struct SettingsSheetView: View {
                 Text("Free tier: 3.5/3.1 Flash-Lite ~500 req/dia e 250K tokens/min.")
                     .font(FontRegistrationManager.chicago(size: 11))
                     .foregroundStyle(.secondary)
-
-                Divider()
-
-                Toggle("Interpretar automaticamente ao pausar escrita", isOn: $autoInterpretOnPause)
-                    .font(FontRegistrationManager.chicago(size: 13))
             }
             .font(FontRegistrationManager.chicago(size: 13))
         } label: {

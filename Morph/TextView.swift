@@ -20,6 +20,7 @@ struct TextView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var interpretador = Interpretador()
+    @State private var scrollController = RetroScrollController()
     @State private var texto: String = ""
     @State private var modo: ModoChamadas = .umaChamada
     @State private var comEvidencia: Bool = true
@@ -27,19 +28,16 @@ struct TextView: View {
     @State private var filtros = Filtros()
 
     @State private var isEditingText: Bool = true
-    @State private var autoInterpretOnPause: Bool = true
     @State private var showingSettingsSheet: Bool = false
-    @State private var showingScoresSummary: Bool = false
+    @State private var isDismissingScreen: Bool = false
+    @State private var suppressKeyboardTrigger: Bool = false
 
     @State private var scopeMode: AutomatedAnimationScope = .contextualPerWord
     @State private var selectedWordIndex: Int = 0
-    @State private var inspectedWordIndex: Int? = nil
     @State private var stageReferenceDate: Date = .now
     @State private var cachedWordScores: [ParameterScores] = []
 
     @State private var tarefaInterpretacao: Task<Void, Never>?
-    @State private var tarefaAutoPause: Task<Void, Never>?
-    @FocusState private var editorFocused: Bool
 
     private var activeScores: ParameterScores {
         interpretador.parameterScores(filtros: filtros)
@@ -68,13 +66,14 @@ struct TextView: View {
             VStack(spacing: 0) {
                 RetroHeaderBar(
                     metrics: metrics,
-                    onHome: { dismiss() },
-                    onSettings: { showingSettingsSheet = true }
+                    onHome: sairParaInicio,
+                    onSettings: abrirConfiguracoes,
+                    onTapEmptySpace: { scrollController.resignFocus() }
                 )
 
-                ZStack(alignment: .bottom) {
-                    canvasArea
-                    bottomControls
+                ZStack(alignment: .bottomTrailing) {
+                    canvasArea(metrics: metrics)
+                    statusOverlay(metrics: metrics)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -96,7 +95,9 @@ struct TextView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .containerBackground(.clear, for: .navigation)
-        .sheet(isPresented: $showingSettingsSheet) {
+        .sheet(isPresented: $showingSettingsSheet, onDismiss: {
+            suppressKeyboardTrigger = false
+        }) {
             SettingsSheetView(
                 interpretador: interpretador,
                 texto: $texto,
@@ -104,74 +105,48 @@ struct TextView: View {
                 comEvidencia: $comEvidencia,
                 deterministico: $deterministico,
                 filtros: $filtros,
-                autoInterpretOnPause: $autoInterpretOnPause,
                 onTriggerRun: { reps in executarInterpretacao(repeticoes: reps) },
                 onSelectExample: { novoTexto in selecionarExemplo(novoTexto) }
             )
         }
-        .onChange(of: texto) { oldValue, newValue in
-            inspectedWordIndex = nil
+        .onChange(of: texto) { _, _ in
             recomputarScoresPorPalavra()
-            agendarAutoInterpretacao(oldValue: oldValue, newValue: newValue)
         }
         .onChange(of: interpretador.lote.count) { _, _ in
-            inspectedWordIndex = nil
             recomputarScoresPorPalavra()
         }
         .onChange(of: filtros.limiar) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarContradicoes) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarNaoLiterais) { _, _ in recomputarScoresPorPalavra() }
+        .onDisappear {
+            isDismissingScreen = true
+            tarefaInterpretacao?.cancel()
+        }
     }
 
-    // MARK: - Área Central (Editor de Texto vs Palco de Animações)
+    // MARK: - Área Central (Editor com Caret SVG + Scrollbar Condicional vs Palco de Animações)
 
-    private var canvasArea: some View {
-        GeometryReader { geo in
-            if isEditingText || interpretador.lote.isEmpty || !hasText {
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $texto)
-                        .focused($editorFocused)
-                        .font(.system(size: 26, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.black.opacity(0.88))
-                        .scrollContentBackground(.hidden)
-                        .padding(.horizontal, 28)
-                        .padding(.top, 10)
-                        .padding(.bottom, 120)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .toolbar {
-                            ToolbarItemGroup(placement: .keyboard) {
-                                Button("Apagar tudo", role: .destructive, action: apagarTudo)
-                                    .font(FontRegistrationManager.chicago(size: 13))
-                                    .disabled(texto.isEmpty)
-                                Spacer()
-                                Toggle("Auto-interpretar", isOn: $autoInterpretOnPause)
-                                    .toggleStyle(.button)
-                                    .font(FontRegistrationManager.chicago(size: 12))
-                                Button {
-                                    executarInterpretacao(repeticoes: 1)
-                                } label: {
-                                    Label("Concluir e Animar", systemImage: "sparkles")
-                                        .font(FontRegistrationManager.chicago(size: 13))
-                                }
-                                .disabled(!hasText || interpretador.executando || interpretador.indisponibilidade != nil)
-                            }
-                        }
+    @ViewBuilder
+    private func canvasArea(metrics: RetroFrameMetrics) -> some View {
+        if isEditingText || interpretador.lote.isEmpty || !hasText {
+            ZStack(alignment: .trailing) {
+                RetroTextEditor(
+                    text: $texto,
+                    metrics: metrics,
+                    scrollController: scrollController,
+                    useSystemKeyboard: true,
+                    onKeyboardDismissed: aoAbaixarTeclado
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if texto.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Clique aqui para escrever seu texto...")
-                                .font(FontRegistrationManager.chicago(size: 22))
-                                .foregroundStyle(.black.opacity(0.35))
-                            Text("A IA do Gemini interpretará os parâmetros da frase e animará cada palavra.")
-                                .font(FontRegistrationManager.chicago(size: 13))
-                                .foregroundStyle(.black.opacity(0.40))
-                        }
-                        .padding(.horizontal, 33)
-                        .padding(.top, 18)
-                        .allowsHitTesting(false)
-                    }
-                }
-            } else {
+                RetroScrollbarView(
+                    metrics: metrics,
+                    controller: scrollController
+                )
+            }
+            .animation(.easeInOut(duration: 0.18), value: scrollController.metrics.needsScroll)
+        } else {
+            GeometryReader { geo in
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
                     let elapsed = context.date.timeIntervalSince(stageReferenceDate)
 
@@ -182,30 +157,24 @@ struct TextView: View {
                             MorphWordsCanvasView(
                                 tokens: wordTokens,
                                 scope: canvasScope,
-                                selectedWordIndex: bindingWordIndex,
+                                selectedWordIndex: $selectedWordIndex,
                                 elapsedTime: elapsed,
                                 isAndamentoPaused: false,
                                 isolatedParameter: nil,
                                 onWhiteCanvas: true,
-                                onWordTap: { idx in
-                                    withAnimation(.snappy(duration: 0.2)) {
-                                        switch scopeMode {
-                                        case .specificWord: selectedWordIndex = idx
-                                        case .contextualPerWord: inspectedWordIndex = (inspectedWordIndex == idx) ? nil : idx
-                                        case .wholePhrase: break
-                                        }
-                                    }
-                                },
+                                onWordTap: { _ in voltarParaEdicao() },
                                 scoresProvider: { idx in effectiveScores(for: idx) }
                             )
                             .padding(.horizontal, 28)
-                            .padding(.vertical, 80)
+                            .padding(.vertical, 60)
                             .frame(maxWidth: .infinity, minHeight: geo.size.height * 0.45)
 
-                            Spacer(minLength: 110)
+                            Spacer(minLength: 40)
                         }
                         .frame(minHeight: geo.size.height)
                     }
+                    .contentShape(Rectangle())
+                    .onTapGesture { voltarParaEdicao() }
                 }
             }
         }
@@ -213,313 +182,88 @@ struct TextView: View {
 
     private var canvasScope: ModificationScope {
         switch scopeMode {
-        case .wholePhrase: return .wholePhrase
+        case .wholePhrase, .contextualPerWord: return .wholePhrase
         case .specificWord: return .specificWord
-        case .contextualPerWord: return inspectedWordIndex == nil ? .wholePhrase : .specificWord
         }
     }
 
-    private var bindingWordIndex: Binding<Int> {
-        Binding(
-            get: {
-                switch scopeMode {
-                case .specificWord: return selectedWordIndex
-                case .contextualPerWord: return inspectedWordIndex ?? 0
-                case .wholePhrase: return 0
-                }
-            },
-            set: { nova in
-                if scopeMode == .specificWord {
-                    selectedWordIndex = nova
-                } else if scopeMode == .contextualPerWord {
-                    inspectedWordIndex = nova
-                }
-            }
-        )
-    }
+    // MARK: - Feedback Minimalista (Processamento e Aviso de Erro/Chave)
 
-    // MARK: - Controles Inferiores Flutuantes
+    @ViewBuilder
+    private func statusOverlay(metrics: RetroFrameMetrics) -> some View {
+        let scale = metrics.headerScale
 
-    private var bottomControls: some View {
-        VStack(spacing: 10) {
-            if let erro = interpretador.erro ?? interpretador.indisponibilidade {
-                bannerAviso(erro)
-            }
-
-            if interpretador.executando {
-                barraProgresso
-            }
-
-            if !interpretador.lote.isEmpty && hasText {
-                painelResumoEAcoes
-            } else if !interpretador.executando {
-                HStack {
-                    Spacer()
-                    Button {
-                        executarInterpretacao(repeticoes: 1)
-                    } label: {
-                        Label("Interpretar", systemImage: "wand.and.stars")
-                            .font(FontRegistrationManager.chicago(size: 14))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 20)
-                            .frame(height: 42)
-                            .background(
-                                (hasText && interpretador.indisponibilidade == nil) ? Color.accentColor : Color.gray.opacity(0.45),
-                                in: Capsule()
-                            )
-                    }
+        if interpretador.executando {
+            RetroProcessingIndicator(scale: scale)
+                .padding(.trailing, scrollController.metrics.needsScroll ? 58 * scale : 20 * scale)
+                .padding(.bottom, 16 * scale)
+                .transition(.opacity)
+        } else if let erro = interpretador.erro ?? interpretador.indisponibilidade {
+            HStack(spacing: 8 * scale) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 13 * scale, weight: .semibold))
+                Text(erro)
+                    .font(.system(size: 12 * scale, weight: .medium, design: .monospaced))
+                    .lineLimit(2)
+                Button("Ajustes") { abrirConfiguracoes() }
+                    .font(.system(size: 12 * scale, weight: .bold, design: .monospaced))
+                    .underline()
                     .buttonStyle(.plain)
-                    .disabled(!hasText || interpretador.indisponibilidade != nil)
-                }
-                .padding(.horizontal, 28)
             }
-        }
-        .padding(.bottom, 22)
-    }
-
-    private func bannerAviso(_ mensagem: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text(mensagem)
-                .font(FontRegistrationManager.chicago(size: 12))
-                .foregroundStyle(.black.opacity(0.85))
-                .lineLimit(3)
-            Spacer(minLength: 6)
-            Button("Ajustes") { showingSettingsSheet = true }
-                .font(FontRegistrationManager.chicago(size: 12))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.orange.opacity(0.22), in: Capsule())
-                .foregroundStyle(.orange)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.92))
-                .stroke(Color.orange.opacity(0.45), lineWidth: 1)
-        )
-        .padding(.horizontal, 28)
-    }
-
-    private var barraProgresso: some View {
-        HStack(spacing: 10) {
-            ProgressView().tint(.accentColor)
-            Text(interpretador.progresso.isEmpty ? "Interpretando semântica do texto..." : interpretador.progresso)
-                .font(FontRegistrationManager.chicago(size: 12))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Button("Cancelar") { tarefaInterpretacao?.cancel() }
-                .font(FontRegistrationManager.chicago(size: 12))
-                .foregroundStyle(.red)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .background(Capsule().fill(Color.white.opacity(0.95)).shadow(color: .black.opacity(0.12), radius: 8, y: 3))
-        .padding(.horizontal, 28)
-    }
-
-    private var painelResumoEAcoes: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if scopeMode == .contextualPerWord,
-               !isEditingText,
-               let idx = inspectedWordIndex,
-               idx >= 0, idx < wordTokens.count {
-                inspecaoPalavraView(idx: idx)
-            }
-
-            if showingScoresSummary {
-                resumoParametrosAtivosView
-            }
-
-            HStack(spacing: 8) {
-                Button {
-                    withAnimation(.snappy) { showingScoresSummary.toggle() }
-                } label: {
-                    let activeCount = MorphParameter.allCases.filter { activeScores[$0] != 0 }.count
-                    HStack(spacing: 5) {
-                        Image(systemName: "waveform.path.ecg")
-                        Text("\(activeCount) ativos")
-                        if let ultima = interpretador.lote.last {
-                            Text("· \(String(format: "%.2fs", ultima.segundos)) · \(ultima.tokensEntrada + ultima.tokensSaida) tok")
-                                .foregroundStyle(.secondary)
-                        }
-                        Image(systemName: showingScoresSummary ? "chevron.down" : "chevron.up")
-                            .font(.caption2)
-                    }
-                    .font(FontRegistrationManager.chicago(size: 12))
-                    .foregroundStyle(.black)
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 6)
-
-                if !isEditingText && wordTokens.count > 1 {
-                    scopeSelector
-                }
-            }
-
-            Divider().overlay(Color.black.opacity(0.08))
-
-            HStack(spacing: 10) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isEditingText.toggle()
-                        editorFocused = isEditingText
-                    }
-                } label: {
-                    Label(isEditingText ? "Ver Animação" : "Editar Texto", systemImage: isEditingText ? "play.fill" : "pencil")
-                        .font(FontRegistrationManager.chicago(size: 13))
-                        .padding(.horizontal, 14)
-                        .frame(height: 38)
-                        .background(Color.black.opacity(0.06), in: Capsule())
-                        .foregroundStyle(.black.opacity(0.85))
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 8)
-
-                Button {
-                    if interpretador.executando {
-                        tarefaInterpretacao?.cancel()
-                    } else {
-                        executarInterpretacao(repeticoes: 1)
-                    }
-                } label: {
-                    Label(
-                        hasInterpretedCurrentText ? "Interpretar" : "Atualizar IA",
-                        systemImage: hasInterpretedCurrentText ? "wand.and.stars" : "arrow.triangle.2.circlepath"
-                    )
-                    .font(FontRegistrationManager.chicago(size: 13))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 38)
-                    .background(
-                        interpretador.indisponibilidade == nil ? Color.accentColor : Color.gray.opacity(0.45),
-                        in: Capsule()
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(interpretador.indisponibilidade != nil && !interpretador.executando)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.95))
-                .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
-        )
-        .padding(.horizontal, 28)
-    }
-
-    private var scopeSelector: some View {
-        HStack(spacing: 2) {
-            ForEach(AutomatedAnimationScope.allCases) { option in
-                let selected = scopeMode == option
-                Button {
-                    scopeMode = option
-                } label: {
-                    Text(option.tituloCurto)
-                        .font(FontRegistrationManager.chicago(size: 11))
-                        .foregroundStyle(selected ? .black : .black.opacity(0.6))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(selected ? Color.white : Color.clear, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(Color.black.opacity(0.08), in: Capsule())
-    }
-
-    private func inspecaoPalavraView(idx: Int) -> some View {
-        let wordScores = effectiveScores(for: idx)
-        let wordNonZero = MorphParameter.allCases.filter { wordScores[$0] != 0 }
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Palavra “\(wordTokens[idx])”:")
-                    .font(FontRegistrationManager.chicago(size: 12))
-                    .foregroundStyle(.black)
-                Spacer()
-                Button {
-                    withAnimation(.snappy) { inspectedWordIndex = nil }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    if wordNonZero.isEmpty {
-                        Text("Sem animação própria nesta palavra (0)")
-                            .font(FontRegistrationManager.chicago(size: 11))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(wordNonZero) { param in
-                            let val = wordScores[param]
-                            HStack(spacing: 4) {
-                                Image(systemName: param.safeIcon).font(.system(size: 10))
-                                Text("\(param.rawValue): \(param.formattedScore(val))")
-                                    .font(FontRegistrationManager.chicago(size: 11))
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.cyan.opacity(0.18), in: Capsule())
-                            .foregroundStyle(Color(red: 0.0, green: 0.45, blue: 0.68))
-                        }
-                    }
-                }
-            }
-        }
-        .padding(8)
-        .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private var resumoParametrosAtivosView: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                let nonZero = MorphParameter.allCases.filter { activeScores[$0] != 0 }
-                if nonZero.isEmpty {
-                    Text("Todos os parâmetros neutros (0)")
-                        .font(FontRegistrationManager.chicago(size: 11))
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(nonZero) { param in
-                        let val = activeScores[param]
-                        let ancorasTexto: String = {
-                            guard scopeMode == .contextualPerWord,
-                                  let res = interpretador.lote.last?.resultados[param.catalogoId],
-                                  !res.ancoras.isEmpty else { return "" }
-                            let trechos = res.ancoras.map { a in
-                                res.ancoras.count > 1
-                                    ? "“\(a.trecho)”(\(a.nivel > 0 ? "+\(a.nivel)" : "\(a.nivel)"))"
-                                    : "“\(a.trecho)”"
-                            }
-                            return " · " + trechos.joined(separator: ", ")
-                        }()
-                        HStack(spacing: 4) {
-                            Image(systemName: param.safeIcon).font(.system(size: 10))
-                            Text("\(param.rawValue): \(param.formattedScore(val))\(ancorasTexto)")
-                                .font(FontRegistrationManager.chicago(size: 11))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.14), in: Capsule())
-                        .foregroundStyle(Color.accentColor)
-                    }
-                }
-            }
+            .foregroundStyle(RetroTerminalStyle.ink)
+            .padding(.horizontal, 12 * scale)
+            .padding(.vertical, 8 * scale)
+            .background(
+                RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
+                    .fill(Color(red: 238.0 / 255, green: 230.0 / 255, blue: 184.0 / 255).opacity(0.92))
+                    .stroke(RetroTerminalStyle.ink.opacity(0.65), lineWidth: max(1.5, 2 * scale))
+            )
+            .padding(.horizontal, 20 * scale)
+            .padding(.bottom, 14 * scale)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // MARK: - Lógica de Scores e Execução
+    // MARK: - Navegação, Teclado e Execução da IA
+
+    private func sairParaInicio() {
+        isDismissingScreen = true
+        suppressKeyboardTrigger = true
+        tarefaInterpretacao?.cancel()
+        scrollController.resignFocus()
+        dismiss()
+    }
+
+    private func abrirConfiguracoes() {
+        suppressKeyboardTrigger = true
+        scrollController.resignFocus()
+        showingSettingsSheet = true
+    }
+
+    private func voltarParaEdicao() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isEditingText = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            scrollController.focus()
+        }
+    }
+
+    /// Ponto único de disparo ao encerrar o teclado (hoje teclado do sistema; futuramente teclado virtual na TV).
+    private func aoAbaixarTeclado() {
+        guard !isDismissingScreen, !suppressKeyboardTrigger, !showingSettingsSheet else { return }
+        guard hasText else { return }
+
+        if hasInterpretedCurrentText {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isEditingText = false
+            }
+            return
+        }
+
+        guard !interpretador.executando, interpretador.indisponibilidade == nil else { return }
+        executarInterpretacao(repeticoes: 1)
+    }
 
     private func recomputarScoresPorPalavra() {
         cachedWordScores = interpretador.wordParameterScores(tokens: wordTokens, filtros: filtros)
@@ -537,41 +281,16 @@ struct TextView: View {
         }
     }
 
-    private func agendarAutoInterpretacao(oldValue: String, newValue: String) {
-        tarefaAutoPause?.cancel()
-        guard autoInterpretOnPause else { return }
-        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, newValue != oldValue else { return }
-
-        tarefaAutoPause = Task {
-            try? await Task.sleep(for: .milliseconds(2200))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                if hasText && !interpretador.executando && interpretador.indisponibilidade == nil && !hasInterpretedCurrentText {
-                    executarInterpretacao(repeticoes: 1)
-                }
-            }
-        }
-    }
-
-    private func apagarTudo() {
-        tarefaAutoPause?.cancel()
-        tarefaInterpretacao?.cancel()
-        texto = ""
-        isEditingText = true
-        editorFocused = true
-    }
-
     private func selecionarExemplo(_ novoTexto: String) {
-        tarefaAutoPause?.cancel()
         texto = novoTexto
         executarInterpretacao(repeticoes: 1)
     }
 
     private func executarInterpretacao(repeticoes: Int) {
         guard hasText, interpretador.indisponibilidade == nil else { return }
-        tarefaAutoPause?.cancel()
-        editorFocused = false
+        suppressKeyboardTrigger = true
+        scrollController.resignFocus()
+        suppressKeyboardTrigger = false
         tarefaInterpretacao?.cancel()
 
         let textoAlvo = texto
@@ -584,7 +303,8 @@ struct TextView: View {
                 deterministico: deterministico
             )
             await MainActor.run {
-                if !interpretador.lote.isEmpty {
+                if !interpretador.lote.isEmpty && !isDismissingScreen {
+                    stageReferenceDate = .now
                     withAnimation(.easeInOut(duration: 0.25)) {
                         isEditingText = false
                     }
