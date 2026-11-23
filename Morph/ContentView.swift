@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct ContentView: View {
-    private let screenCenter = Color(red: 232.0 / 255, green: 216.0 / 255, blue: 150.0 / 255) // #E8D896
-    private let screenEdge = Color(red: 198.0 / 255, green: 172.0 / 255, blue: 88.0 / 255)     // #C6AC58
+    private let screenCenter = Color(red: 238.0 / 255, green: 230.0 / 255, blue: 184.0 / 255) // #EEE6B8
+    private let screenEdge = Color(red: 210.0 / 255, green: 194.0 / 255, blue: 122.0 / 255)   // #D2C27A
 
     var body: some View {
         GeometryReader { geo in
@@ -39,7 +39,7 @@ struct ContentView: View {
                     colors: [screenCenter, screenEdge],
                     center: .center,
                     startRadiusFraction: 0.10,
-                    endRadiusFraction: 0.45
+                    endRadiusFraction: 0.58
                 )
             )
             .frame(width: size.width * 0.90, height: size.height * 0.90)
