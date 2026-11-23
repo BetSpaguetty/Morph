@@ -3,7 +3,8 @@ import UIKit
 
 enum RetroTerminalStyle {
     /// Mesmo grafite escuro (#2D3037) do asset `caret_morph.svg`
-    static let ink = Color(red: 45.0 / 255.0, green: 48.0 / 255.0, blue: 55.0 / 255.0)
+    static let uiInk = UIColor(red: 45.0 / 255.0, green: 48.0 / 255.0, blue: 55.0 / 255.0, alpha: 1.0)
+    static let ink = Color(uiColor: uiInk)
 }
 
 /// Métricas responsivas compartilhadas entre a moldura vetorial e o cabeçalho,
@@ -16,7 +17,6 @@ struct RetroFrameMetrics: Equatable {
     let lineWidth: CGFloat
     let headerHeight: CGFloat
     let bevelStartY: CGFloat
-    let bevelEdgeInset: CGFloat
     let bevelRun: CGFloat
     let bendRadius: CGFloat
     let headerContentInsetX: CGFloat
@@ -26,45 +26,41 @@ struct RetroFrameMetrics: Equatable {
         let cw = max(containerSize.width, 1)
         let ch = max(containerSize.height, 1)
 
-        // Margem externa proporcional separada em X e Y para espelhar a abertura da `borda_tv`
         let hPad = max(15, cw * 0.042)
         let vPad = max(15, ch * 0.048)
 
         let fw = max(cw - hPad * 2, 120)
         let fh = max(ch - vPad * 2, 100)
 
-        // Raio elíptico proporcional acompanha a curvatura esticada dos 4 cantos da TV
         let rx = Self.clamp(fw * 0.038, min: 14, max: 36)
         let ry = Self.clamp(fh * 0.054, min: 14, max: 36)
 
         let headerH = Self.clamp(fh * 0.092, min: 38, max: 58)
         let startY = min(ry * 0.86, headerH * 0.48)
-        let dy = max(0, ry - startY)
-        let ratio = ry > 0 ? min(1, dy / ry) : 0
-        let edgeInset = dy > 0 ? rx * (1 - sqrt(max(0, 1 - ratio * ratio))) : 0
+        let edgeInset = Self.bevelEdgeInset(rx: rx, ry: ry, at: startY)
 
         let bevelDrop = max(10, headerH - startY)
         let run = min(bevelDrop * 1.08, fw * 0.09)
         let bend = min(10, bevelDrop * 0.42)
 
-        // Conteúdo do cabeçalho sempre ancorado com folga além do vértice interno do chanfro
-        let contentInsetX = edgeInset + run + Self.clamp(fw * 0.015, min: 8, max: 16)
-
-        let scale = Self.clamp(min(fw / 460, headerH / 54), min: 0.72, max: 1.0)
-        let stroke = Self.clamp(min(fw, fh) * 0.0055, min: 2.5, max: 3.5)
-
         self.horizontalOuterPadding = hPad
         self.verticalOuterPadding = vPad
         self.frameSize = CGSize(width: fw, height: fh)
         self.cornerSize = CGSize(width: rx, height: ry)
-        self.lineWidth = stroke
+        self.lineWidth = Self.clamp(min(fw, fh) * 0.0055, min: 2.5, max: 3.5)
         self.headerHeight = headerH
         self.bevelStartY = startY
-        self.bevelEdgeInset = edgeInset
         self.bevelRun = run
         self.bendRadius = bend
-        self.headerContentInsetX = contentInsetX
-        self.headerScale = scale
+        self.headerContentInsetX = edgeInset + run + Self.clamp(fw * 0.015, min: 8, max: 16)
+        self.headerScale = Self.clamp(min(fw / 460, headerH / 54), min: 0.72, max: 1.0)
+    }
+
+    static func bevelEdgeInset(rx: CGFloat, ry: CGFloat, at y: CGFloat) -> CGFloat {
+        let dy = max(0, ry - y)
+        guard dy > 0, ry > 0 else { return 0 }
+        let ratio = min(1, dy / ry)
+        return rx * (1 - sqrt(max(0, 1 - ratio * ratio)))
     }
 
     private static func clamp(_ value: CGFloat, min lower: CGFloat, max upper: CGFloat) -> CGFloat {
@@ -83,14 +79,11 @@ struct RetroWindowFrameShape: Shape {
         let ry = min(metrics.cornerSize.height, rect.height / 4)
         let h = min(metrics.headerHeight, rect.height / 3)
 
-        // 1. Contorno externo arredondado (arco elíptico exato garante junção sem folga com os chanfros)
+        // Arco circular/elíptico exato garante junção sem folga com os chanfros laterais
         path.addRoundedRect(in: rect, cornerSize: CGSize(width: rx, height: ry), style: .circular)
 
-        // 2. Divisória do cabeçalho nascendo exatamente na borda lateral
         let startY = min(metrics.bevelStartY, h - 6)
-        let dy = max(0, ry - startY)
-        let ratio = ry > 0 ? min(1, dy / ry) : 0
-        let edgeInset = dy > 0 ? rx * (1 - sqrt(max(0, 1 - ratio * ratio))) : 0
+        let edgeInset = RetroFrameMetrics.bevelEdgeInset(rx: rx, ry: ry, at: startY)
         let run = min(metrics.bevelRun, rect.width * 0.14)
         let bend = min(metrics.bendRadius, max(2, (h - startY) * 0.45))
 
@@ -154,7 +147,7 @@ struct RetroHeaderBar: View {
     }
 }
 
-/// Relógio 24h sincronizado com a hora do dispositivo.
+/// Relógio 24h sincronizado com a hora do dispositivo (acorda apenas na virada de minuto).
 struct DeviceClockView: View {
     var scale: CGFloat = 1.0
 
@@ -166,7 +159,7 @@ struct DeviceClockView: View {
     }()
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.everyMinute) { context in
             Text(Self.formatter.string(from: context.date))
                 .font(.system(size: 20 * scale, weight: .semibold, design: .monospaced))
                 .monospacedDigit()
@@ -176,68 +169,180 @@ struct DeviceClockView: View {
     }
 }
 
-/// Indicador de bateria retrô de 5 segmentos ligado ao `UIDevice`.
+/// Indicador de bateria retrô de 5 segmentos ligado ao `UIDevice` e ao Modo Economia de Energia.
 struct DeviceBatteryView: View {
-    var scale: CGFloat = 1.0
-    @State private var batteryLevel: Float = UIDevice.current.batteryLevel
+    let scale: CGFloat
+
+    @State private var batteryLevel: Float
+    @State private var batteryState: UIDevice.BatteryState
+    @State private var isLowPowerMode: Bool
 
     private let totalSegments = 5
 
-    static func filledSegments(for level: Float, total: Int = 5) -> Int {
-        // No Simulador `batteryLevel` retorna -1.0; usa carga cheia como fallback visual.
-        guard level >= 0 else { return total }
-        let percent = Int((Double(level) * 100.0).rounded())
-        if percent <= 5 { return 0 }
-        let step = max(1, 100 / max(1, total))
-        return min(total, max(1, (percent + step - 1) / step))
+    private static let fullOliveColor = Color(red: 132.0 / 255.0, green: 102.0 / 255.0, blue: 48.0 / 255.0)
+    private static let partialBeigeColor = Color(red: 196.0 / 255.0, green: 180.0 / 255.0, blue: 148.0 / 255.0)
+    private static let lowPowerYellowColor = Color(red: 236.0 / 255.0, green: 212.0 / 255.0, blue: 76.0 / 255.0)
+    private static let criticalRedColor = Color(red: 184.0 / 255.0, green: 0.0 / 255.0, blue: 0.0 / 255.0)
+
+    init(scale: CGFloat = 1.0) {
+        self.scale = scale
+        // Habilita antes da primeira leitura para evitar flash inicial com -1.0
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        _batteryLevel = State(initialValue: UIDevice.current.batteryLevel)
+        _batteryState = State(initialValue: UIDevice.current.batteryState)
+        _isLowPowerMode = State(initialValue: ProcessInfo.processInfo.isLowPowerModeEnabled)
+        #if DEBUG
+        Self.verifyBatteryRules()
+        #endif
     }
 
-    private var filledCount: Int {
-        Self.filledSegments(for: batteryLevel, total: totalSegments)
+    static func percent(for level: Float) -> Int? {
+        guard level >= 0 else { return nil }
+        return Int((Double(level) * 100.0).rounded())
+    }
+
+    static func filledSegments(for level: Float, total: Int = 5) -> Int {
+        // No Simulador `batteryLevel` retorna -1.0; usa carga cheia como fallback visual.
+        guard let pct = percent(for: level) else { return total }
+        if pct <= 0 { return 0 }
+        let step = max(1, 100 / max(1, total))
+        return min(total, max(1, (pct + step - 1) / step))
+    }
+
+    static func segmentColor(
+        level: Float,
+        isCharging: Bool,
+        isLowPowerMode: Bool,
+        total: Int = 5
+    ) -> Color {
+        let pct = percent(for: level)
+        let filled = filledSegments(for: level, total: total)
+
+        if !isCharging, let pct, pct > 0, pct < 10 { return criticalRedColor }
+        if isLowPowerMode { return lowPowerYellowColor }
+        return filled >= total ? fullOliveColor : partialBeigeColor
+    }
+
+    #if DEBUG
+    private static var didVerifyRules = false
+    private static func verifyBatteryRules() {
+        guard !didVerifyRules else { return }
+        didVerifyRules = true
+        assert(filledSegments(for: -1.0) == 5)
+        assert(filledSegments(for: 0.0) == 0)
+        assert(filledSegments(for: 0.05) == 1)
+        assert(filledSegments(for: 0.20) == 1)
+        assert(filledSegments(for: 0.80) == 4)
+        assert(filledSegments(for: 0.85) == 5)
+        assert(segmentColor(level: 0.05, isCharging: false, isLowPowerMode: false) == criticalRedColor)
+        assert(segmentColor(level: 0.05, isCharging: true, isLowPowerMode: false) == partialBeigeColor)
+        assert(segmentColor(level: 0.50, isCharging: false, isLowPowerMode: true) == lowPowerYellowColor)
+        assert(segmentColor(level: 1.00, isCharging: false, isLowPowerMode: false) == fullOliveColor)
+    }
+    #endif
+
+    private var isCharging: Bool { batteryState == .charging }
+    private var filledCount: Int { Self.filledSegments(for: batteryLevel, total: totalSegments) }
+    private var activeSegmentColor: Color {
+        Self.segmentColor(level: batteryLevel, isCharging: isCharging, isLowPowerMode: isLowPowerMode, total: totalSegments)
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 3.5 * scale, style: .continuous)
-                    .stroke(RetroTerminalStyle.ink, lineWidth: max(1.8, 2.5 * scale))
+        let bodyWidth = 44 * scale
+        let capWidth = 4.5 * scale
+        let totalWidth = bodyWidth + capWidth
+        let height = 22 * scale
+        let strokeW = max(1.9, 2.6 * scale)
 
-                HStack(spacing: max(1.5, 2 * scale)) {
-                    ForEach(0..<totalSegments, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 1, style: .continuous)
-                            .fill(index < filledCount ? RetroTerminalStyle.ink.opacity(0.62) : Color.clear)
-                    }
+        ZStack(alignment: .leading) {
+            HStack(spacing: max(1.5, 2.0 * scale)) {
+                ForEach(0..<totalSegments, id: \.self) { index in
+                    Rectangle()
+                        .fill(index < filledCount ? activeSegmentColor : Color.clear)
                 }
-                .padding(max(2.5, 3.5 * scale))
             }
-            .frame(width: 44 * scale, height: 21 * scale)
+            .padding(max(3.0, 4.0 * scale))
+            .frame(width: bodyWidth, height: height)
 
-            // Polo positivo da bateria
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 2 * scale,
-                topTrailingRadius: 2 * scale
-            )
-            .fill(RetroTerminalStyle.ink)
-            .frame(width: 3.5 * scale, height: 9 * scale)
+            BatteryOutlineShape(capWidth: capWidth, capHeightRatio: 0.42)
+                .stroke(
+                    RetroTerminalStyle.ink,
+                    style: StrokeStyle(lineWidth: strokeW, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: totalWidth, height: height)
+
+            if isCharging {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 26 * scale, weight: .semibold))
+                    .foregroundStyle(RetroTerminalStyle.ink)
+                    .frame(width: bodyWidth, height: height)
+            }
         }
+        .frame(width: totalWidth, height: height)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(batteryAccessibilityLabel)
-        .onAppear {
-            UIDevice.current.isBatteryMonitoringEnabled = true
-            batteryLevel = UIDevice.current.batteryLevel
-        }
+        .onAppear(perform: syncBatteryStatus)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryLevelDidChangeNotification)) { _ in
-            batteryLevel = UIDevice.current.batteryLevel
+            syncBatteryStatus()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
-            batteryLevel = UIDevice.current.batteryLevel
+            syncBatteryStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
     }
 
+    private func syncBatteryStatus() {
+        batteryLevel = UIDevice.current.batteryLevel
+        batteryState = UIDevice.current.batteryState
+        isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
+
     private var batteryAccessibilityLabel: String {
-        guard batteryLevel >= 0 else { return "Bateria" }
-        return "Bateria em \(Int((batteryLevel * 100).rounded())) por cento"
+        guard let pct = Self.percent(for: batteryLevel) else { return "Bateria" }
+        var parts = ["Bateria em \(pct) por cento"]
+        if isCharging { parts.append("carregando") }
+        if isLowPowerMode { parts.append("modo economia de energia") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// Silhueta contínua da bateria com o polo positivo direito também contornado/vazado.
+private struct BatteryOutlineShape: Shape {
+    let capWidth: CGFloat
+    let capHeightRatio: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let bodyMaxX = max(rect.minX + 6, rect.maxX - capWidth)
+        let capH = rect.height * capHeightRatio
+        let capTop = rect.midY - capH * 0.5
+        let capBottom = rect.midY + capH * 0.5
+
+        let rBody = min(3.2, rect.height * 0.16)
+        let rCap = min(1.8, capH * 0.22)
+        let rNotch: CGFloat = 0.8
+
+        let pTL = CGPoint(x: rect.minX, y: rect.minY)
+        let pTR = CGPoint(x: bodyMaxX, y: rect.minY)
+        let pNotchTop = CGPoint(x: bodyMaxX, y: capTop)
+        let pCapTR = CGPoint(x: rect.maxX, y: capTop)
+        let pCapBR = CGPoint(x: rect.maxX, y: capBottom)
+        let pNotchBot = CGPoint(x: bodyMaxX, y: capBottom)
+        let pBR = CGPoint(x: bodyMaxX, y: rect.maxY)
+        let pBL = CGPoint(x: rect.minX, y: rect.maxY)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rBody, y: rect.minY))
+        path.addArc(tangent1End: pTR, tangent2End: pNotchTop, radius: rBody)
+        path.addArc(tangent1End: pNotchTop, tangent2End: pCapTR, radius: rNotch)
+        path.addArc(tangent1End: pCapTR, tangent2End: pCapBR, radius: rCap)
+        path.addArc(tangent1End: pCapBR, tangent2End: pNotchBot, radius: rCap)
+        path.addArc(tangent1End: pNotchBot, tangent2End: pBR, radius: rNotch)
+        path.addArc(tangent1End: pBR, tangent2End: pBL, radius: rBody)
+        path.addArc(tangent1End: pBL, tangent2End: pTL, radius: rBody)
+        path.addArc(tangent1End: pTL, tangent2End: pTR, radius: rBody)
+        path.closeSubpath()
+        return path
     }
 }

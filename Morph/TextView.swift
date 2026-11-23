@@ -1,21 +1,5 @@
 import SwiftUI
 
-enum AutomatedAnimationScope: String, CaseIterable, Identifiable {
-    case contextualPerWord = "Por Palavra (IA)"
-    case wholePhrase = "Frase Inteira"
-    case specificWord = "Palavra Manual"
-
-    var id: String { rawValue }
-
-    var tituloCurto: String {
-        switch self {
-        case .contextualPerWord: return "Palavras"
-        case .wholePhrase: return "Frase"
-        case .specificWord: return "Manual"
-        }
-    }
-}
-
 struct TextView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -31,13 +15,21 @@ struct TextView: View {
     @State private var showingSettingsSheet: Bool = false
     @State private var isDismissingScreen: Bool = false
     @State private var suppressKeyboardTrigger: Bool = false
+    @State private var focusRequestID: Int = 0
 
-    @State private var scopeMode: AutomatedAnimationScope = .contextualPerWord
-    @State private var selectedWordIndex: Int = 0
     @State private var stageReferenceDate: Date = .now
     @State private var cachedWordScores: [ParameterScores] = []
-
     @State private var tarefaInterpretacao: Task<Void, Never>?
+
+    private var trimmedText: String {
+        texto.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasText: Bool { !trimmedText.isEmpty }
+
+    private var hasInterpretedCurrentText: Bool {
+        !interpretador.lote.isEmpty && interpretador.textoDoLote == trimmedText
+    }
 
     private var activeScores: ParameterScores {
         interpretador.parameterScores(filtros: filtros)
@@ -49,14 +41,6 @@ struct TextView: View {
             .map(String.init)
             .filter { !$0.isEmpty }
         return split.isEmpty ? ["Morph"] : split
-    }
-
-    private var hasText: Bool {
-        !texto.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var hasInterpretedCurrentText: Bool {
-        !interpretador.lote.isEmpty && interpretador.textoDoLote == texto.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
@@ -109,12 +93,8 @@ struct TextView: View {
                 onSelectExample: { novoTexto in selecionarExemplo(novoTexto) }
             )
         }
-        .onChange(of: texto) { _, _ in
-            recomputarScoresPorPalavra()
-        }
-        .onChange(of: interpretador.lote.count) { _, _ in
-            recomputarScoresPorPalavra()
-        }
+        .onChange(of: texto) { _, _ in recomputarScoresPorPalavra() }
+        .onChange(of: interpretador.lote.count) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.limiar) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarContradicoes) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarNaoLiterais) { _, _ in recomputarScoresPorPalavra() }
@@ -134,6 +114,7 @@ struct TextView: View {
                     text: $texto,
                     metrics: metrics,
                     scrollController: scrollController,
+                    focusRequestID: focusRequestID,
                     useSystemKeyboard: true,
                     onKeyboardDismissed: aoAbaixarTeclado
                 )
@@ -156,8 +137,8 @@ struct TextView: View {
 
                             MorphWordsCanvasView(
                                 tokens: wordTokens,
-                                scope: canvasScope,
-                                selectedWordIndex: $selectedWordIndex,
+                                scope: .wholePhrase,
+                                selectedWordIndex: .constant(0),
                                 elapsedTime: elapsed,
                                 isAndamentoPaused: false,
                                 isolatedParameter: nil,
@@ -177,13 +158,6 @@ struct TextView: View {
                     .onTapGesture { voltarParaEdicao() }
                 }
             }
-        }
-    }
-
-    private var canvasScope: ModificationScope {
-        switch scopeMode {
-        case .wholePhrase, .contextualPerWord: return .wholePhrase
-        case .specificWord: return .specificWord
         }
     }
 
@@ -241,11 +215,9 @@ struct TextView: View {
     }
 
     private func voltarParaEdicao() {
+        focusRequestID += 1
         withAnimation(.easeInOut(duration: 0.2)) {
             isEditingText = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            scrollController.focus()
         }
     }
 
@@ -270,15 +242,7 @@ struct TextView: View {
     }
 
     private func effectiveScores(for wordIndex: Int) -> ParameterScores {
-        switch scopeMode {
-        case .contextualPerWord:
-            return (wordIndex >= 0 && wordIndex < cachedWordScores.count) ? cachedWordScores[wordIndex] : activeScores
-        case .wholePhrase:
-            return activeScores
-        case .specificWord:
-            let safeIdx = min(max(0, selectedWordIndex), max(0, wordTokens.count - 1))
-            return wordIndex == safeIdx ? activeScores : ParameterScores()
-        }
+        (wordIndex >= 0 && wordIndex < cachedWordScores.count) ? cachedWordScores[wordIndex] : activeScores
     }
 
     private func selecionarExemplo(_ novoTexto: String) {
