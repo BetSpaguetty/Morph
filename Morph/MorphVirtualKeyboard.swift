@@ -321,6 +321,7 @@ struct MorphVirtualKeyboardView: View {
     let onDismiss: () -> Void
 
     @Environment(\.crtBarrelTransform) private var barrelTransform
+    @Environment(CRTTextInputBridge.self) private var textInputBridge
 
     @State private var layer: MorphKeyboardLayer = .letters
     @State private var shiftState: MorphShiftState
@@ -410,6 +411,10 @@ struct MorphVirtualKeyboardView: View {
             if keyboardFrameInCRT != frame {
                 keyboardFrameInCRT = frame
             }
+            let nextStartY = frame.isEmpty ? -1.0 : frame.minY
+            if textInputBridge.keyboardStartYInCRT != nextStartY {
+                textInputBridge.keyboardStartYInCRT = nextStartY
+            }
         }
         .overlay(alignment: .topLeading) {
             if let accent = accentState {
@@ -430,6 +435,9 @@ struct MorphVirtualKeyboardView: View {
         .onDisappear {
             cancelTimers()
             resetTouchState()
+            if textInputBridge.keyboardStartYInCRT != -1.0 {
+                textInputBridge.keyboardStartYInCRT = -1.0
+            }
         }
     }
 

@@ -94,6 +94,7 @@ final class CRTTextInputBridge {
     var session: Session?
     var editorFrameInCRT: CGRect = .zero
     var excludedFramesInCRT: [String: CGRect] = [:]
+    var keyboardStartYInCRT: CGFloat = -1.0
 
     func setExcludedFrame(_ frame: CGRect, for key: String) {
         if frame.isEmpty {
@@ -178,6 +179,7 @@ final class RetroCaretTextView: UITextView {
     private func configure() {
         backgroundColor = .clear
         isOpaque = false
+        isMultipleTouchEnabled = true
         showsVerticalScrollIndicator = false
         showsHorizontalScrollIndicator = false
         alwaysBounceVertical = true
@@ -649,6 +651,7 @@ final class CRTTextInputContainerView: UIView, UIGestureRecognizerDelegate {
         super.init(frame: frame)
         backgroundColor = .clear
         isOpaque = false
+        isMultipleTouchEnabled = true
         addSubview(textView)
         textView.addGestureRecognizer(crtTapRecognizer)
     }
