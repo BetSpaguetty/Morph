@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var crtConfig = CRTBarrelConfig()
     @State private var keyboardConfig = MorphKeyboardVisualConfig()
     @State private var textInputBridge = CRTTextInputBridge()
+    @State private var touchEngine = CRTMagneticTouchEngine()
 
     var body: some View {
         GeometryReader { geo in
@@ -38,7 +39,7 @@ struct ContentView: View {
             ZStack {
                 Color.black
 
-                // 1. Tela interna 100% SwiftUI sob passe único Metal (barril + bolinhas + iluminação)
+                // 1. Tela interna 100% SwiftUI sob passe único Metal (barril + toque magnético + bolinhas + iluminação)
                 ZStack {
                     screenBackground
 
@@ -56,16 +57,13 @@ struct ContentView: View {
                 .environment(keyboardConfig)
                 .environment(textInputBridge)
                 .compositingGroup()
-                .layerEffect(
-                    ShaderLibrary.crtScreenEffect(
-                        .float2(transform.openingRect.minX, transform.openingRect.minY),
-                        .float2(transform.openingRect.width, transform.openingRect.height),
-                        .float(Float(transform.curvature)),
-                        .float(Float(crtConfig.vignetteStrength)),
-                        .float(Float(crtConfig.bezelShadowStrength)),
-                        .float(Float(crtConfig.glassGlareStrength))
-                    ),
-                    maxSampleOffset: transform.maxSampleOffset
+                .modifier(
+                    CRTScreenEffectModifier(
+                        transform: transform,
+                        barrelConfig: crtConfig,
+                        touchEngine: touchEngine,
+                        textInputBridge: textInputBridge
+                    )
                 )
 
                 // 2. Input UIKit invisível fora do shader Metal (somente durante edição de texto)
@@ -78,6 +76,11 @@ struct ContentView: View {
                     )
                     .frame(width: geo.size.width, height: geo.size.height)
                 }
+
+                // 2b. Observador passivo UIKit de multitoque (cobre toda a tela da TV sem bloquear nenhum gesto)
+                CRTPassiveTouchObserver(engine: touchEngine, transform: transform)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .allowsHitTesting(false)
 
                 // 3. Moldura física da TV por cima, ocupando 100% da tela
                 Image("borda_tv")

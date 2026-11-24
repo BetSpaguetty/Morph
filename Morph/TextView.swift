@@ -115,6 +115,11 @@ struct TextView: View {
             .onChange(of: metrics) { _, newMetrics in syncTextInputSession(metrics: newMetrics) }
             .onChange(of: isShowingEditor) { _, _ in syncTextInputSession(metrics: metrics) }
             .onChange(of: scrollController.isFocused) { _, _ in syncTextInputSession(metrics: metrics) }
+            .onChange(of: isVirtualKeyboardVisible) { _, visible in
+                if !visible && textInputBridge.keyboardStartYInCRT != -1.0 {
+                    textInputBridge.keyboardStartYInCRT = -1.0
+                }
+            }
             .onChange(of: focusRequestID) { _, _ in syncTextInputSession(metrics: metrics) }
         }
         .sheet(isPresented: $showingSettingsSheet, onDismiss: {
@@ -143,6 +148,7 @@ struct TextView: View {
             tarefaInterpretacao?.cancel()
             textInputBridge.session = nil
             textInputBridge.excludedFramesInCRT.removeAll()
+            textInputBridge.keyboardStartYInCRT = -1.0
         }
     }
 
