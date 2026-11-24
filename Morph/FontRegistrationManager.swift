@@ -84,6 +84,19 @@ final class FontRegistrationManager {
         }
     }
 
+    /// Termos explícitos que indicam gato/felino ou vocalizações características.
+    static func isFelineTerm(_ text: String) -> Bool {
+        let normalized = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        let tokens = normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let felineTerms: Set<String> = [
+            "gato", "gata", "gatos", "gatas", "gatinho", "gatinha", "gatinhos", "gatinhas", "gatao", "gataoes",
+            "felino", "felina", "felinos", "felinas",
+            "cat", "cats", "kitten", "kittens", "kitty", "kitties", "feline", "felines", "tomcat", "tabby",
+            "miau", "miaulado", "miado", "ronronar", "ronronando", "ronronou", "ronronava", "purr", "purring"
+        ]
+        return tokens.contains { felineTerms.contains($0) }
+    }
+
     /// Resolve a tipografia combinando Tom (-5..+5), Volume (-5..+5) e Domínio (-5..+5).
     /// Regra definida para o Tom:
     /// -5 e -4 -> Times New Roman
@@ -94,6 +107,8 @@ final class FontRegistrationManager {
         tomScore: Int,
         volumeScore: Int,
         dominioScore: Int,
+        calorScore: Int = 0,
+        felineContext: Bool = false,
         baseSize: CGFloat = 34.0
     ) -> ResolvedTypography {
         registerAllBundledFonts()
@@ -116,6 +131,38 @@ final class FontRegistrationManager {
             default: return 1.0
             }
         }()
+
+        // A tipografia temática do gato tem precedência sobre a fonte fria se
+        // a mesma palavra também estiver marcada com Calor negativo.
+        if felineContext {
+            let catsFont = UIFont(name: "CatsFont-Regular", size: size) != nil
+                ? Font.custom("CatsFont-Regular", fixedSize: size)
+                : .system(size: size, weight: swiftUIWeight, design: .rounded)
+            return ResolvedTypography(
+                font: catsFont,
+                fontSize: size,
+                familyName: "Cats Font",
+                weightLabel: weightName,
+                extraStrokeWidth: extraStrokeForTwoWeightFont(volume: clampedVol, fontSize: size),
+                whisperOpacityMultiplier: whisperOpacity
+            )
+        }
+
+        // A fonte Snowtop Caps marca frio explícito (frio/gelo), preservando a fonte
+        // atual para o nível -1, que representa apenas uma sensação fresca.
+        if calorScore <= -2 {
+            let snowtopCaps = UIFont(name: "SnowtopCaps", size: size) != nil
+                ? Font.custom("SnowtopCaps", fixedSize: size)
+                : .system(size: size, weight: swiftUIWeight, design: .rounded)
+            return ResolvedTypography(
+                font: snowtopCaps,
+                fontSize: size,
+                familyName: "Snowtop Caps",
+                weightLabel: weightName,
+                extraStrokeWidth: extraStrokeForTwoWeightFont(volume: clampedVol, fontSize: size),
+                whisperOpacityMultiplier: whisperOpacity
+            )
+        }
 
         // 1. Tom -5 ou -4: Times New Roman
         if clampedTom <= -4 {
