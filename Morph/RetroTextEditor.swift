@@ -28,11 +28,20 @@ struct RetroScrollMetrics: Equatable {
 final class RetroScrollController {
     var metrics = RetroScrollMetrics()
     var keyboardOverlap: CGFloat = 0
+    var isFocused: Bool = false
     var renderVersion: Int = 0
     weak var textView: RetroCaretTextView?
 
     func markNeedsCanvasRedraw() {
         renderVersion &+= 1
+    }
+
+    func insertText(_ string: String) {
+        textView?.insertVirtualText(string)
+    }
+
+    func deleteBackward() {
+        textView?.deleteVirtualBackward()
     }
 
     func scrollToProgress(_ progress: CGFloat) {
@@ -78,6 +87,7 @@ final class CRTTextInputBridge {
         var scrollController: RetroScrollController
         var focusRequestID: Int
         var useSystemKeyboard: Bool
+        var isVirtualKeyboardVisible: Bool = false
         var onKeyboardDismissed: () -> Void
     }
 
@@ -98,18 +108,33 @@ final class CRTTextInputBridge {
 
 // MARK: - UITextView Invisível (Input Nativo + Espelho TextKit 1 para o Canvas Curvado)
 
+/// Substituto vazio para o destaque nativo de seleção do UIKit (fora do shader), evitando marcação dupla sobre o Canvas curvado.
+private final class InvisibleSelectionHighlightView: UIView, UITextSelectionHighlightView {
+    var selectionRects: [UITextSelectionRect] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 final class RetroCaretTextView: UITextView {
     private static let caretAspectRatio: CGFloat = 11.0 / 41.0 // viewBox de `caret_morph.svg`
 
     var onMetricsChanged: ((RetroScrollMetrics) -> Void)?
     var onVisualChanged: (() -> Void)?
 
-    /// Alterna entre o teclado padrão do sistema (hoje) e um teclado virtual próprio dentro da TV (futuro).
+    /// Alterna entre o teclado padrão do sistema e o teclado virtual interno dentro da TV.
     var useSystemKeyboard: Bool = true {
         didSet {
             guard oldValue != useSystemKeyboard else { return }
-            inputView = useSystemKeyboard ? nil : UIView(frame: .zero)
-            inputAccessoryView = useSystemKeyboard ? makeKeyboardDismissAccessory() : nil
+            applyKeyboardConfiguration()
             if isFirstResponder { reloadInputViews() }
         }
     }
@@ -124,6 +149,7 @@ final class RetroCaretTextView: UITextView {
 
     private var blinkTimer: Timer?
     private var lastMetrics = RetroScrollMetrics()
+    private var lastLayoutHeight: CGFloat = 0
 
     convenience init() {
         let storage = NSTextStorage()
@@ -155,15 +181,90 @@ final class RetroCaretTextView: UITextView {
         showsVerticalScrollIndicator = false
         showsHorizontalScrollIndicator = false
         alwaysBounceVertical = true
-        keyboardDismissMode = .interactive
-        // Mantém alpha = 1 para hit-testing e teclado nativo, delegando o desenho visível ao Canvas dentro do shader.
-        // shortcut: alças azuis de seleção por duplo toque permanecem em coordenadas UIKit, trocar se houver seleção customizada.
+        // Mantém alpha = 1 para hit-testing/seleção nativa, mas mascara 100% da renderização UIKit (delegando tudo ao Canvas no shader).
+        // shortcut: o menu nativo de edição (Cut/Copy) permanece em coordenadas UIKit fora do shader.
         textColor = .clear
         tintColor = .clear
-        inputAccessoryView = useSystemKeyboard ? makeKeyboardDismissAccessory() : nil
+        layer.mask = CALayer()
+        applyKeyboardConfiguration()
+        suppressNativeSelectionHighlight(in: self)
 
         mirrorLayoutManager.addTextContainer(mirrorContainer)
         mirrorStorage.addLayoutManager(mirrorLayoutManager)
+    }
+
+    private func suppressNativeSelectionHighlight(in view: UIView) {
+        for interaction in view.interactions {
+            if let display = interaction as? UITextSelectionDisplayInteraction,
+               !(display.highlightView is InvisibleSelectionHighlightView) {
+                display.highlightView = InvisibleSelectionHighlightView()
+            }
+        }
+        for subview in view.subviews {
+            if subview is any UITextSelectionHighlightView, !(subview is InvisibleSelectionHighlightView) {
+                subview.alpha = 0
+            }
+            suppressNativeSelectionHighlight(in: subview)
+        }
+    }
+
+    private func applyKeyboardConfiguration() {
+        if useSystemKeyboard {
+            inputView = nil
+            inputAccessoryView = makeKeyboardDismissAccessory()
+            keyboardDismissMode = .interactive
+            autocorrectionType = .default
+            spellCheckingType = .default
+            smartQuotesType = .default
+            smartDashesType = .default
+        } else {
+            inputView = UIView(frame: .zero)
+            inputAccessoryView = nil
+            // Limpa a barra de atalhos do iPadOS (desfazer/colar/ditado) que ainda aparece com inputView vazio.
+            inputAssistantItem.leadingBarButtonGroups = []
+            inputAssistantItem.trailingBarButtonGroups = []
+            keyboardDismissMode = .none
+            autocorrectionType = .no
+            spellCheckingType = .no
+            smartQuotesType = .no
+            smartDashesType = .no
+        }
+    }
+
+    func insertVirtualText(_ string: String) {
+        guard !string.isEmpty else { return }
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
+        insertText(string)
+        if string.contains("\n") {
+            layoutIfNeeded()
+        }
+        markMirrorDirty()
+        updateCaretBlinkState(resetBlink: true)
+        scrollCaretToVisible(animated: false)
+        publishScrollMetrics()
+        onVisualChanged?()
+    }
+
+    func deleteVirtualBackward() {
+        guard hasText || selectedRange.length > 0 else { return }
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
+        deleteBackward()
+        markMirrorDirty()
+        updateCaretBlinkState(resetBlink: true)
+        scrollCaretToVisible(animated: false)
+        publishScrollMetrics()
+        onVisualChanged?()
+    }
+
+    func scrollCaretToVisible(animated: Bool = false) {
+        guard let position = selectedTextRange?.end else { return }
+        let rawRect = super.caretRect(for: position)
+        guard !rawRect.isNull, !rawRect.isInfinite, rawRect.height > 0 else { return }
+        scrollRectToVisible(rawRect.insetBy(dx: 0, dy: -12), animated: animated)
     }
 
     private func makeKeyboardDismissAccessory() -> UIToolbar {
@@ -228,11 +329,25 @@ final class RetroCaretTextView: UITextView {
         onVisualChanged?()
     }
 
+    override func addInteraction(_ interaction: any UIInteraction) {
+        super.addInteraction(interaction)
+        if let display = interaction as? UITextSelectionDisplayInteraction,
+           !(display.highlightView is InvisibleSelectionHighlightView) {
+            display.highlightView = InvisibleSelectionHighlightView()
+        }
+    }
+
+    override func didAddSubview(_ subview: UIView) {
+        super.didAddSubview(subview)
+        suppressNativeSelectionHighlight(in: subview)
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
             stopBlinking()
         } else {
+            suppressNativeSelectionHighlight(in: self)
             updateCaretBlinkState(resetBlink: false)
             onVisualChanged?()
         }
@@ -255,6 +370,11 @@ final class RetroCaretTextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
         syncMirrorContainerGeometry()
+        suppressNativeSelectionHighlight(in: self)
+        if bounds.height > 1 && lastLayoutHeight > 1 && bounds.height < lastLayoutHeight - 1 && isFirstResponder {
+            scrollCaretToVisible(animated: false)
+        }
+        lastLayoutHeight = bounds.height
         updateCaretBlinkState(resetBlink: false)
         publishScrollMetrics()
         onVisualChanged?()
@@ -318,12 +438,16 @@ final class RetroCaretTextView: UITextView {
         let inset = textContainerInset
         let offset = contentOffset
 
-        // Destaque de seleção (se houver)
+        // Destaque de seleção único dentro do shader (fillPath evita sobreposição de alfa entre retângulos)
         if selectedRange.length > 0, let range = selectedTextRange {
-            cgContext.setFillColor(RetroTerminalStyle.uiInk.withAlphaComponent(0.24).cgColor)
-            for selRect in selectionRects(for: range) where !selRect.rect.isEmpty {
-                let r = selRect.rect.offsetBy(dx: -offset.x, dy: -offset.y)
-                cgContext.fill(r)
+            let rects = selectionRects(for: range)
+                .map { $0.rect.offsetBy(dx: -offset.x, dy: -offset.y) }
+                .filter { $0.width > 0.5 && $0.height > 0.5 }
+            if !rects.isEmpty {
+                cgContext.setFillColor(RetroTerminalStyle.uiInk.withAlphaComponent(0.24).cgColor)
+                cgContext.beginPath()
+                for r in rects { cgContext.addRect(r) }
+                cgContext.fillPath()
             }
         }
 
@@ -451,7 +575,7 @@ struct RetroTextCanvasView: View {
                 }
             } else if text.isEmpty {
                 // Caret inicial imediato no primeiro frame antes do overlay UIKit anexar
-                let layout = RetroEditorLayout.compute(for: metrics)
+                let layout = RetroEditorLayout.compute(for: metrics, isVirtualKeyboardVisible: false)
                 let lineH = UIFont.monospacedSystemFont(ofSize: layout.fontSize, weight: .regular).lineHeight
                 let caretH = lineH * 1.06
                 let caretW = caretH * (11.0 / 41.0)
@@ -476,15 +600,25 @@ struct RetroTextCanvasView: View {
 }
 
 private enum RetroEditorLayout {
-    static func compute(for metrics: RetroFrameMetrics) -> (fontSize: CGFloat, insets: UIEdgeInsets) {
+    static func compute(
+        for metrics: RetroFrameMetrics,
+        isVirtualKeyboardVisible: Bool
+    ) -> (fontSize: CGFloat, insets: UIEdgeInsets) {
         let fw = metrics.frameSize.width
         let bodyH = max(120, metrics.frameSize.height - metrics.headerHeight)
+        let compactWithKeyboard = isVirtualKeyboardVisible && bodyH < 420
 
-        let fontSize = min(26, max(19, 25 * metrics.headerScale))
+        let fontSize = compactWithKeyboard
+            ? min(22, max(17, 21 * metrics.headerScale))
+            : min(26, max(19, 25 * metrics.headerScale))
         let leftInset = min(190, max(24, fw * 0.20))
-        let topInset = min(68, max(20, bodyH * 0.11))
+        let topInset = compactWithKeyboard
+            ? min(28, max(10, bodyH * 0.05))
+            : min(68, max(20, bodyH * 0.11))
         let rightInset = max(62 * metrics.headerScale, fw * 0.11)
-        let bottomInset = max(24, bodyH * 0.08)
+        let bottomInset = isVirtualKeyboardVisible
+            ? (compactWithKeyboard ? 8 : 14)
+            : max(24, bodyH * 0.08)
 
         return (fontSize, UIEdgeInsets(top: topInset, left: leftInset, bottom: bottomInset, right: rightInset))
     }
@@ -655,7 +789,10 @@ struct CRTTextInputOverlay: UIViewRepresentable {
     }
 
     private func applyLayout(to tv: RetroCaretTextView) {
-        let layout = RetroEditorLayout.compute(for: session.metrics)
+        let layout = RetroEditorLayout.compute(
+            for: session.metrics,
+            isVirtualKeyboardVisible: session.isVirtualKeyboardVisible
+        )
         if tv.font?.pointSize != layout.fontSize {
             tv.font = UIFont.monospacedSystemFont(ofSize: layout.fontSize, weight: .regular)
         }
@@ -711,6 +848,9 @@ struct CRTTextInputOverlay: UIViewRepresentable {
             observers.forEach { NotificationCenter.default.removeObserver($0) }
             observers.removeAll()
             parent.session.scrollController.keyboardOverlap = 0
+            if parent.session.scrollController.isFocused {
+                parent.session.scrollController.isFocused = false
+            }
         }
 
         func applyPendingFocusIfNeeded(on tv: RetroCaretTextView) {
@@ -724,6 +864,7 @@ struct CRTTextInputOverlay: UIViewRepresentable {
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             didNotifyDismissForSession = false
+            parent.session.scrollController.isFocused = true
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -751,6 +892,7 @@ struct CRTTextInputOverlay: UIViewRepresentable {
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
+            parent.session.scrollController.isFocused = false
             notifyDismissOnce()
         }
 

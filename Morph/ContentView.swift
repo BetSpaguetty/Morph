@@ -25,6 +25,7 @@ struct ContentView: View {
 
     @State private var router = MorphRouter()
     @State private var crtConfig = CRTBarrelConfig()
+    @State private var keyboardConfig = MorphKeyboardVisualConfig()
     @State private var textInputBridge = CRTTextInputBridge()
 
     var body: some View {
@@ -52,6 +53,7 @@ struct ContentView: View {
                 .environment(\.crtBarrelTransform, transform)
                 .environment(router)
                 .environment(crtConfig)
+                .environment(keyboardConfig)
                 .environment(textInputBridge)
                 .compositingGroup()
                 .layerEffect(
