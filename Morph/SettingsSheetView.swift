@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsSheetView: View {
     @Bindable var interpretador: Interpretador
+    @Bindable var crtConfig: CRTBarrelConfig
     @Binding var texto: String
     @Binding var modo: ModoChamadas
     @Binding var comEvidencia: Bool
@@ -62,6 +63,7 @@ struct SettingsSheetView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    painelDebugCurvatura
                     painelGemini
                     painelExemplos
                     painelConfiguracaoExecucao
@@ -81,6 +83,79 @@ struct SettingsSheetView: View {
                         .font(FontRegistrationManager.chicago(size: 14))
                 }
             }
+        }
+    }
+
+    // MARK: - 0. Debug: Curvatura Barril e Sombreamento do Vidro CRT
+
+    private var painelDebugCurvatura: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                debugSliderRow(
+                    titulo: "Curvatura Barril",
+                    constante: "defaultCurvature",
+                    valor: $crtConfig.curvature,
+                    range: CRTBarrelConfig.curvatureRange
+                )
+                debugSliderRow(
+                    titulo: "Vinheta Convexa (Domo)",
+                    constante: "defaultVignetteStrength",
+                    valor: $crtConfig.vignetteStrength,
+                    range: CRTBarrelConfig.vignetteRange
+                )
+                debugSliderRow(
+                    titulo: "Sombra da Moldura (Recuo)",
+                    constante: "defaultBezelShadowStrength",
+                    valor: $crtConfig.bezelShadowStrength,
+                    range: CRTBarrelConfig.bezelShadowRange
+                )
+                debugSliderRow(
+                    titulo: "Reflexo de Vidro (Centro)",
+                    constante: "defaultGlassGlareStrength",
+                    valor: $crtConfig.glassGlareStrength,
+                    range: CRTBarrelConfig.glassGlareRange
+                )
+
+                HStack {
+                    Text("Valores diretos para CRTBarrelConfig")
+                        .font(FontRegistrationManager.chicago(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if crtConfig.hasCustomValues {
+                        Button("Restaurar padrões") {
+                            crtConfig.resetToDefaults()
+                        }
+                        .font(FontRegistrationManager.chicago(size: 11))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .font(FontRegistrationManager.chicago(size: 13))
+        } label: {
+            Text("Debug · Vidro CRT (Curvatura e Sombreamento)")
+                .font(FontRegistrationManager.chicago(size: 14))
+        }
+    }
+
+    private func debugSliderRow(
+        titulo: String,
+        constante: String,
+        valor: Binding<Double>,
+        range: ClosedRange<Double>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(titulo)
+                Spacer()
+                Text(String(format: "%.2f", valor.wrappedValue))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.primary)
+            }
+            Slider(value: valor, in: range, step: 0.01)
+            Text(constante)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
         }
     }
 

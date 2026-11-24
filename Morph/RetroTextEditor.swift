@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 import Observation
 
-// MARK: - Métricas e Controlador de Scroll / Teclado
+// MARK: - Métricas, Controlador de Scroll e Ponte de Input fora do Shader
 
 struct RetroScrollMetrics: Equatable {
     var contentHeight: CGFloat = 0
@@ -28,7 +28,12 @@ struct RetroScrollMetrics: Equatable {
 final class RetroScrollController {
     var metrics = RetroScrollMetrics()
     var keyboardOverlap: CGFloat = 0
+    var renderVersion: Int = 0
     weak var textView: RetroCaretTextView?
+
+    func markNeedsCanvasRedraw() {
+        renderVersion &+= 1
+    }
 
     func scrollToProgress(_ progress: CGFloat) {
         guard let tv = textView else { return }
@@ -36,6 +41,7 @@ final class RetroScrollController {
         let targetY = -tv.adjustedContentInset.top + clamped * metrics.maxOffset
         tv.setContentOffset(CGPoint(x: tv.contentOffset.x, y: targetY), animated: false)
         tv.publishScrollMetrics()
+        markNeedsCanvasRedraw()
     }
 
     func scrollDownByStep() {
@@ -50,7 +56,10 @@ final class RetroScrollController {
         let nextY = min(maxY, tv.contentOffset.y + delta)
         guard nextY > tv.contentOffset.y + 0.1 else { return false }
         tv.setContentOffset(CGPoint(x: tv.contentOffset.x, y: nextY), animated: animated)
-        if !animated { tv.publishScrollMetrics() }
+        if !animated {
+            tv.publishScrollMetrics()
+            markNeedsCanvasRedraw()
+        }
         return true
     }
 
@@ -59,12 +68,41 @@ final class RetroScrollController {
     }
 }
 
-// MARK: - UITextView com Caret SVG Customizado
+/// Ponte entre a área de escrita (dentro do shader Metal) e o `UITextView` invisível (fora do shader).
+@MainActor
+@Observable
+final class CRTTextInputBridge {
+    struct Session {
+        var text: Binding<String>
+        var metrics: RetroFrameMetrics
+        var scrollController: RetroScrollController
+        var focusRequestID: Int
+        var useSystemKeyboard: Bool
+        var onKeyboardDismissed: () -> Void
+    }
+
+    var session: Session?
+    var editorFrameInCRT: CGRect = .zero
+    var excludedFramesInCRT: [String: CGRect] = [:]
+
+    func setExcludedFrame(_ frame: CGRect, for key: String) {
+        if frame.isEmpty {
+            if excludedFramesInCRT[key] != nil {
+                excludedFramesInCRT.removeValue(forKey: key)
+            }
+        } else if excludedFramesInCRT[key] != frame {
+            excludedFramesInCRT[key] = frame
+        }
+    }
+}
+
+// MARK: - UITextView Invisível (Input Nativo + Espelho TextKit 1 para o Canvas Curvado)
 
 final class RetroCaretTextView: UITextView {
     private static let caretAspectRatio: CGFloat = 11.0 / 41.0 // viewBox de `caret_morph.svg`
 
     var onMetricsChanged: ((RetroScrollMetrics) -> Void)?
+    var onVisualChanged: (() -> Void)?
 
     /// Alterna entre o teclado padrão do sistema (hoje) e um teclado virtual próprio dentro da TV (futuro).
     var useSystemKeyboard: Bool = true {
@@ -76,15 +114,26 @@ final class RetroCaretTextView: UITextView {
         }
     }
 
-    private let caretImageView: UIImageView = {
-        let iv = UIImageView(image: UIImage(named: "caret_morph"))
-        iv.contentMode = .scaleAspectFit
-        iv.isUserInteractionEnabled = false
-        return iv
-    }()
+    private(set) var caretAlpha: CGFloat = 1.0
+
+    // Espelho TextKit 1 idêntico ao próprio textView, porém com tinta visível para desenhar dentro do shader Metal
+    private let mirrorStorage = NSTextStorage()
+    private let mirrorLayoutManager = NSLayoutManager()
+    private let mirrorContainer = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+    private var mirrorDirty = true
 
     private var blinkTimer: Timer?
     private var lastMetrics = RetroScrollMetrics()
+
+    convenience init() {
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+        self.init(frame: .zero, textContainer: container)
+    }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -107,11 +156,14 @@ final class RetroCaretTextView: UITextView {
         showsHorizontalScrollIndicator = false
         alwaysBounceVertical = true
         keyboardDismissMode = .interactive
-        textColor = RetroTerminalStyle.uiInk
+        // Mantém alpha = 1 para hit-testing e teclado nativo, delegando o desenho visível ao Canvas dentro do shader.
+        // shortcut: alças azuis de seleção por duplo toque permanecem em coordenadas UIKit, trocar se houver seleção customizada.
+        textColor = .clear
         tintColor = .clear
         inputAccessoryView = useSystemKeyboard ? makeKeyboardDismissAccessory() : nil
 
-        addSubview(caretImageView)
+        mirrorLayoutManager.addTextContainer(mirrorContainer)
+        mirrorStorage.addLayoutManager(mirrorLayoutManager)
     }
 
     private func makeKeyboardDismissAccessory() -> UIToolbar {
@@ -135,16 +187,45 @@ final class RetroCaretTextView: UITextView {
 
     override var selectedTextRange: UITextRange? {
         didSet {
-            syncTintForSelection()
-            updateCaretVisibilityAndFrame(resetBlink: true)
+            updateCaretBlinkState(resetBlink: true)
+            onVisualChanged?()
         }
     }
 
     override var text: String! {
         didSet {
-            updateCaretVisibilityAndFrame(resetBlink: true)
+            mirrorDirty = true
+            updateCaretBlinkState(resetBlink: true)
             publishScrollMetrics()
+            onVisualChanged?()
         }
+    }
+
+    override var font: UIFont? {
+        didSet {
+            mirrorDirty = true
+            onVisualChanged?()
+        }
+    }
+
+    override var textContainerInset: UIEdgeInsets {
+        didSet {
+            mirrorDirty = true
+            onVisualChanged?()
+        }
+    }
+
+    override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        super.setMarkedText(markedText, selectedRange: selectedRange)
+        mirrorDirty = true
+        updateCaretBlinkState(resetBlink: true)
+        onVisualChanged?()
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        mirrorDirty = true
+        onVisualChanged?()
     }
 
     override func didMoveToWindow() {
@@ -152,43 +233,122 @@ final class RetroCaretTextView: UITextView {
         if window == nil {
             stopBlinking()
         } else {
-            updateCaretVisibilityAndFrame(resetBlink: false)
+            updateCaretBlinkState(resetBlink: false)
+            onVisualChanged?()
         }
     }
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
-        syncTintForSelection()
-        updateCaretVisibilityAndFrame(resetBlink: true)
+        updateCaretBlinkState(resetBlink: true)
+        onVisualChanged?()
         return ok
     }
 
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
-        updateCaretVisibilityAndFrame(resetBlink: false)
+        updateCaretBlinkState(resetBlink: false)
+        onVisualChanged?()
         return ok
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        bringSubviewToFront(caretImageView)
-        updateCaretVisibilityAndFrame(resetBlink: false)
+        syncMirrorContainerGeometry()
+        updateCaretBlinkState(resetBlink: false)
         publishScrollMetrics()
+        onVisualChanged?()
     }
 
-    private func syncTintForSelection() {
-        // Caret nativo oculto em modo cursor; destaque nativo preservado quando há seleção de texto
-        tintColor = selectedRange.length > 0 ? RetroTerminalStyle.uiInk.withAlphaComponent(0.35) : .clear
+    func markMirrorDirty() {
+        mirrorDirty = true
     }
 
-    func updateCaretVisibilityAndFrame(resetBlink: Bool = false) {
-        let shouldShow = window != nil && selectedRange.length == 0 && (isFirstResponder || text.isEmpty)
-
-        guard shouldShow else {
-            caretImageView.isHidden = true
-            stopBlinking()
-            return
+    private func syncMirrorContainerGeometry() {
+        let targetWidth = textContainer.size.width > 0
+            ? textContainer.size.width
+            : max(1, bounds.width - textContainerInset.left - textContainerInset.right)
+        let targetSize = CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
+        if mirrorContainer.size != targetSize {
+            mirrorContainer.size = targetSize
         }
+        if mirrorContainer.lineFragmentPadding != textContainer.lineFragmentPadding {
+            mirrorContainer.lineFragmentPadding = textContainer.lineFragmentPadding
+        }
+        if mirrorContainer.lineBreakMode != textContainer.lineBreakMode {
+            mirrorContainer.lineBreakMode = textContainer.lineBreakMode
+        }
+    }
+
+    private func syncMirrorTextIfNeeded() {
+        syncMirrorContainerGeometry()
+        guard mirrorDirty else { return }
+        mirrorDirty = false
+
+        let resolvedFont = font ?? UIFont.monospacedSystemFont(ofSize: 24, weight: .regular)
+        let fullText = text ?? ""
+        let attributed = NSMutableAttributedString(
+            string: fullText,
+            attributes: [
+                .font: resolvedFont,
+                .foregroundColor: RetroTerminalStyle.uiInk
+            ]
+        )
+
+        // Sublinha texto em composição (ex.: acentuação / dead keys)
+        if let marked = markedTextRange {
+            let loc = offset(from: beginningOfDocument, to: marked.start)
+            let len = offset(from: marked.start, to: marked.end)
+            if loc >= 0, len > 0, loc + len <= attributed.length {
+                attributed.addAttribute(
+                    .underlineStyle,
+                    value: NSUnderlineStyle.single.rawValue,
+                    range: NSRange(location: loc, length: len)
+                )
+            }
+        }
+
+        mirrorStorage.setAttributedString(attributed)
+    }
+
+    /// Desenha o texto visível e destaques de seleção no `CGContext` do Canvas SwiftUI (dentro do shader Metal).
+    func drawMirroredContent(in cgContext: CGContext, viewportSize: CGSize) {
+        syncMirrorTextIfNeeded()
+
+        let inset = textContainerInset
+        let offset = contentOffset
+
+        // Destaque de seleção (se houver)
+        if selectedRange.length > 0, let range = selectedTextRange {
+            cgContext.setFillColor(RetroTerminalStyle.uiInk.withAlphaComponent(0.24).cgColor)
+            for selRect in selectionRects(for: range) where !selRect.rect.isEmpty {
+                let r = selRect.rect.offsetBy(dx: -offset.x, dy: -offset.y)
+                cgContext.fill(r)
+            }
+        }
+
+        guard mirrorStorage.length > 0 else { return }
+
+        let visibleInContainer = CGRect(
+            x: offset.x - inset.left,
+            y: offset.y - inset.top,
+            width: viewportSize.width,
+            height: viewportSize.height
+        )
+        let glyphRange = mirrorLayoutManager.glyphRange(forBoundingRect: visibleInContainer, in: mirrorContainer)
+        guard glyphRange.length > 0 else { return }
+
+        let drawOrigin = CGPoint(x: inset.left - offset.x, y: inset.top - offset.y)
+        UIGraphicsPushContext(cgContext)
+        mirrorLayoutManager.drawBackground(forGlyphRange: glyphRange, at: drawOrigin)
+        mirrorLayoutManager.drawGlyphs(forGlyphRange: glyphRange, at: drawOrigin)
+        UIGraphicsPopContext()
+    }
+
+    /// Retângulo exato do `caret_morph` SVG no espaço da viewport do Canvas.
+    func currentCaretRectInViewport() -> CGRect? {
+        let shouldShow = window != nil && selectedRange.length == 0 && (isFirstResponder || (text ?? "").isEmpty)
+        guard shouldShow else { return nil }
 
         let position = selectedTextRange?.start ?? beginningOfDocument
         let rawRect = super.caretRect(for: position)
@@ -199,13 +359,21 @@ final class RetroCaretTextView: UITextView {
         let caretH = max(baseRect.height, font?.lineHeight ?? 30) * 1.06
         let caretW = caretH * Self.caretAspectRatio
 
-        caretImageView.frame = CGRect(
-            x: baseRect.minX,
-            y: baseRect.midY - caretH * 0.5,
+        return CGRect(
+            x: baseRect.minX - contentOffset.x,
+            y: baseRect.midY - caretH * 0.5 - contentOffset.y,
             width: caretW,
             height: caretH
         )
-        caretImageView.isHidden = false
+    }
+
+    func updateCaretBlinkState(resetBlink: Bool) {
+        let shouldShow = window != nil && selectedRange.length == 0 && (isFirstResponder || (text ?? "").isEmpty)
+        guard shouldShow else {
+            caretAlpha = 0.0
+            stopBlinking()
+            return
+        }
 
         if resetBlink || blinkTimer == nil {
             restartBlinking()
@@ -223,11 +391,12 @@ final class RetroCaretTextView: UITextView {
 
     private func restartBlinking() {
         blinkTimer?.invalidate()
-        caretImageView.alpha = 1.0
+        caretAlpha = 1.0
         blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.caretImageView.isHidden else { return }
-                self.caretImageView.alpha = (self.caretImageView.alpha > 0.5) ? 0.0 : 1.0
+                guard let self else { return }
+                self.caretAlpha = (self.caretAlpha > 0.5) ? 0.0 : 1.0
+                self.onVisualChanged?()
             }
         }
     }
@@ -254,92 +423,259 @@ final class RetroCaretTextView: UITextView {
     }
 }
 
-// MARK: - SwiftUI Representable
+// MARK: - Canvas SwiftUI do Editor (100% dentro do Shader Metal CRT)
 
-struct RetroTextEditor: UIViewRepresentable {
-    @Binding var text: String
-    let metrics: RetroFrameMetrics
+struct RetroTextCanvasView: View {
     let scrollController: RetroScrollController
-    var focusRequestID: Int = 0
-    var useSystemKeyboard: Bool = true
-    var onKeyboardDismissed: () -> Void
+    let metrics: RetroFrameMetrics
+    let text: String
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
+    @Environment(CRTTextInputBridge.self) private var textInputBridge
 
-    func makeUIView(context: Context) -> RetroCaretTextView {
-        let tv = RetroCaretTextView()
-        tv.delegate = context.coordinator
-        tv.useSystemKeyboard = useSystemKeyboard
-        tv.text = text
-        applyLayout(to: tv)
+    var body: some View {
+        Canvas { context, size in
+            _ = scrollController.renderVersion
 
-        tv.onMetricsChanged = { [weak scrollController] newMetrics in
-            scrollController?.metrics = newMetrics
+            if let tv = scrollController.textView {
+                context.withCGContext { cgContext in
+                    cgContext.saveGState()
+                    cgContext.clip(to: CGRect(origin: .zero, size: size))
+                    tv.drawMirroredContent(in: cgContext, viewportSize: size)
+                    cgContext.restoreGState()
+                }
+
+                if let caretRect = tv.currentCaretRectInViewport(), tv.caretAlpha > 0.01 {
+                    var caretContext = context
+                    caretContext.opacity = Double(tv.caretAlpha)
+                    caretContext.draw(Image("caret_morph"), in: caretRect)
+                }
+            } else if text.isEmpty {
+                // Caret inicial imediato no primeiro frame antes do overlay UIKit anexar
+                let layout = RetroEditorLayout.compute(for: metrics)
+                let lineH = UIFont.monospacedSystemFont(ofSize: layout.fontSize, weight: .regular).lineHeight
+                let caretH = lineH * 1.06
+                let caretW = caretH * (11.0 / 41.0)
+                let rect = CGRect(
+                    x: layout.insets.left + 5,
+                    y: layout.insets.top + (lineH - caretH) * 0.5,
+                    width: caretW,
+                    height: caretH
+                )
+                context.draw(Image("caret_morph"), in: rect)
+            }
         }
-
-        scrollController.textView = tv
-        context.coordinator.attach(to: tv)
-        context.coordinator.applyPendingFocusIfNeeded(on: tv)
-        return tv
-    }
-
-    func updateUIView(_ uiView: RetroCaretTextView, context: Context) {
-        context.coordinator.parent = self
-        scrollController.textView = uiView
-
-        if uiView.useSystemKeyboard != useSystemKeyboard {
-            uiView.useSystemKeyboard = useSystemKeyboard
+        .allowsHitTesting(false)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(CRTCoordinateSpace.name))
+        } action: { frame in
+            if textInputBridge.editorFrameInCRT != frame {
+                textInputBridge.editorFrameInCRT = frame
+            }
         }
-
-        if uiView.text != text {
-            let selected = uiView.selectedRange
-            uiView.text = text
-            let maxLoc = (text as NSString).length
-            uiView.selectedRange = NSRange(location: min(selected.location, maxLoc), length: 0)
-        }
-
-        applyLayout(to: uiView)
-        context.coordinator.applyPendingFocusIfNeeded(on: uiView)
     }
+}
 
-    static func dismantleUIView(_ uiView: RetroCaretTextView, coordinator: Coordinator) {
-        uiView.stopBlinking()
-        coordinator.detach()
-    }
-
-    private func applyLayout(to tv: RetroCaretTextView) {
+private enum RetroEditorLayout {
+    static func compute(for metrics: RetroFrameMetrics) -> (fontSize: CGFloat, insets: UIEdgeInsets) {
         let fw = metrics.frameSize.width
         let bodyH = max(120, metrics.frameSize.height - metrics.headerHeight)
 
         let fontSize = min(26, max(19, 25 * metrics.headerScale))
-        if tv.font?.pointSize != fontSize {
-            tv.font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        }
-
         let leftInset = min(190, max(24, fw * 0.20))
         let topInset = min(68, max(20, bodyH * 0.11))
         let rightInset = max(62 * metrics.headerScale, fw * 0.11)
         let bottomInset = max(24, bodyH * 0.08)
 
-        let desiredInset = UIEdgeInsets(top: topInset, left: leftInset, bottom: bottomInset, right: rightInset)
-        if tv.textContainerInset != desiredInset {
-            tv.textContainerInset = desiredInset
-            tv.updateCaretVisibilityAndFrame(resetBlink: false)
+        return (fontSize, UIEdgeInsets(top: topInset, left: leftInset, bottom: bottomInset, right: rightInset))
+    }
+}
+
+// MARK: - Container UIKit com Hit-Testing Remapeado pelo Efeito Barril (fora do Shader Metal)
+
+final class CRTTextInputContainerView: UIView, UIGestureRecognizerDelegate {
+    let textView = RetroCaretTextView()
+    var editorFrame: CGRect = .zero {
+        didSet {
+            if oldValue != editorFrame {
+                setNeedsLayout()
+            }
+        }
+    }
+    var excludedFrames: [String: CGRect] = [:]
+    var barrelTransform: CRTBarrelTransform = .identity
+
+    private lazy var crtTapRecognizer: UITapGestureRecognizer = {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleWarpedTap(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        return tap
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        addSubview(textView)
+        textView.addGestureRecognizer(crtTapRecognizer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if !editorFrame.isEmpty && textView.frame != editorFrame {
+            textView.frame = editorFrame
+        }
+    }
+
+    /// Remapeia cada toque pela função exata do shader barril antes de decidir se pertence ao editor.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard isUserInteractionEnabled, !isHidden, alpha > 0.01, !editorFrame.isEmpty else {
+            return nil
+        }
+        let logical = barrelTransform.screenToLogical(point)
+        guard editorFrame.contains(logical) else { return nil }
+        if excludedFrames.values.contains(where: { !$0.isEmpty && $0.contains(logical) }) {
+            return nil
+        }
+        return textView
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
+    @objc private func handleWarpedTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        let screenPoint = recognizer.location(in: self)
+        let logicalPoint = barrelTransform.screenToLogical(screenPoint)
+        let pointInTextView = convert(logicalPoint, to: textView)
+
+        if !textView.isFirstResponder {
+            _ = textView.becomeFirstResponder()
+        }
+
+        let applyCaretPosition = { [weak textView] in
+            guard let textView, textView.selectedRange.length == 0 else { return }
+            if let pos = textView.closestPosition(to: pointInTextView) {
+                textView.selectedTextRange = textView.textRange(from: pos, to: pos)
+            }
+        }
+
+        applyCaretPosition()
+        // Garante prevalência sobre o posicionamento não-distorcido nativo do UITextView no mesmo ciclo
+        DispatchQueue.main.async(execute: applyCaretPosition)
+    }
+}
+
+struct CRTTextInputOverlay: UIViewRepresentable {
+    @Binding var text: String
+    let session: CRTTextInputBridge.Session
+    let editorFrame: CGRect
+    let excludedFrames: [String: CGRect]
+    let barrelTransform: CRTBarrelTransform
+
+    init(
+        session: CRTTextInputBridge.Session,
+        editorFrame: CGRect,
+        excludedFrames: [String: CGRect],
+        barrelTransform: CRTBarrelTransform
+    ) {
+        self._text = session.text
+        self.session = session
+        self.editorFrame = editorFrame
+        self.excludedFrames = excludedFrames
+        self.barrelTransform = barrelTransform
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> CRTTextInputContainerView {
+        let container = CRTTextInputContainerView()
+        let tv = container.textView
+        tv.delegate = context.coordinator
+        tv.useSystemKeyboard = session.useSystemKeyboard
+        tv.text = text
+
+        container.editorFrame = editorFrame
+        container.excludedFrames = excludedFrames
+        container.barrelTransform = barrelTransform
+        applyLayout(to: tv)
+
+        let controller = session.scrollController
+        tv.onMetricsChanged = { [weak controller] newMetrics in
+            controller?.metrics = newMetrics
+        }
+        tv.onVisualChanged = { [weak controller] in
+            controller?.markNeedsCanvasRedraw()
+        }
+
+        controller.textView = tv
+        context.coordinator.attach(to: tv)
+        context.coordinator.applyPendingFocusIfNeeded(on: tv)
+        controller.markNeedsCanvasRedraw()
+        return container
+    }
+
+    func updateUIView(_ uiView: CRTTextInputContainerView, context: Context) {
+        context.coordinator.parent = self
+        let tv = uiView.textView
+        let controller = session.scrollController
+        controller.textView = tv
+
+        uiView.editorFrame = editorFrame
+        uiView.excludedFrames = excludedFrames
+        uiView.barrelTransform = barrelTransform
+
+        if tv.useSystemKeyboard != session.useSystemKeyboard {
+            tv.useSystemKeyboard = session.useSystemKeyboard
+        }
+
+        if tv.text != text {
+            let selected = tv.selectedRange
+            tv.text = text
+            let maxLoc = (text as NSString).length
+            tv.selectedRange = NSRange(location: min(selected.location, maxLoc), length: 0)
+        }
+
+        applyLayout(to: tv)
+        context.coordinator.applyPendingFocusIfNeeded(on: tv)
+    }
+
+    static func dismantleUIView(_ uiView: CRTTextInputContainerView, coordinator: Coordinator) {
+        uiView.textView.stopBlinking()
+        coordinator.detach()
+    }
+
+    private func applyLayout(to tv: RetroCaretTextView) {
+        let layout = RetroEditorLayout.compute(for: session.metrics)
+        if tv.font?.pointSize != layout.fontSize {
+            tv.font = UIFont.monospacedSystemFont(ofSize: layout.fontSize, weight: .regular)
+        }
+        if tv.textContainerInset != layout.insets {
+            tv.textContainerInset = layout.insets
+            tv.updateCaretBlinkState(resetBlink: false)
             tv.publishScrollMetrics()
+            tv.onVisualChanged?()
         }
     }
 
     @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: RetroTextEditor
+        var parent: CRTTextInputOverlay
         private weak var textView: RetroCaretTextView?
         private var observers: [NSObjectProtocol] = []
         private var didNotifyDismissForSession = false
         private var lastHandledFocusID = 0
 
-        init(parent: RetroTextEditor) {
+        init(parent: CRTTextInputOverlay) {
             self.parent = parent
         }
 
@@ -374,12 +710,13 @@ struct RetroTextEditor: UIViewRepresentable {
         func detach() {
             observers.forEach { NotificationCenter.default.removeObserver($0) }
             observers.removeAll()
-            parent.scrollController.keyboardOverlap = 0
+            parent.session.scrollController.keyboardOverlap = 0
         }
 
         func applyPendingFocusIfNeeded(on tv: RetroCaretTextView) {
-            guard parent.focusRequestID != lastHandledFocusID else { return }
-            lastHandledFocusID = parent.focusRequestID
+            let reqID = parent.session.focusRequestID
+            guard reqID != lastHandledFocusID else { return }
+            lastHandledFocusID = reqID
             DispatchQueue.main.async { [weak tv] in
                 _ = tv?.becomeFirstResponder()
             }
@@ -392,17 +729,25 @@ struct RetroTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text ?? ""
             if let retro = textView as? RetroCaretTextView {
-                retro.updateCaretVisibilityAndFrame(resetBlink: true)
+                retro.markMirrorDirty()
+                retro.updateCaretBlinkState(resetBlink: true)
                 retro.publishScrollMetrics()
+                retro.onVisualChanged?()
             }
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
-            (textView as? RetroCaretTextView)?.updateCaretVisibilityAndFrame(resetBlink: true)
+            if let retro = textView as? RetroCaretTextView {
+                retro.updateCaretBlinkState(resetBlink: true)
+                retro.onVisualChanged?()
+            }
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            (scrollView as? RetroCaretTextView)?.publishScrollMetrics()
+            if let retro = scrollView as? RetroCaretTextView {
+                retro.publishScrollMetrics()
+                retro.onVisualChanged?()
+            }
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
@@ -410,26 +755,26 @@ struct RetroTextEditor: UIViewRepresentable {
         }
 
         private func handleSystemKeyboardWillHide() {
-            guard parent.useSystemKeyboard, let tv = textView else { return }
-            parent.scrollController.keyboardOverlap = 0
+            guard parent.session.useSystemKeyboard, let tv = textView else { return }
+            parent.session.scrollController.keyboardOverlap = 0
             if tv.contentInset.bottom != 0 {
                 tv.contentInset.bottom = 0
                 tv.publishScrollMetrics()
+                tv.onVisualChanged?()
             }
             if tv.isFirstResponder {
-                // `resignFirstResponder` dispara `textViewDidEndEditing` sincronamente
                 _ = tv.resignFirstResponder()
             }
         }
 
         private func handleSystemKeyboardFrameChange(endFrame: CGRect?) {
-            guard parent.useSystemKeyboard, let tv = textView, let window = tv.window, let endFrame else { return }
+            guard parent.session.useSystemKeyboard, let tv = textView, let window = tv.window, let endFrame else { return }
             let kbInWindow = window.convert(endFrame, from: nil)
-            let tvInWindow = tv.convert(tv.bounds, to: window)
+            let tvInWindow = tv.superview?.convert(tv.frame, to: window) ?? tv.convert(tv.bounds, to: window)
             let overlap = max(0, tvInWindow.maxY - kbInWindow.minY)
             let newBottomInset = (kbInWindow.minY >= window.bounds.height - 1) ? 0 : overlap
 
-            parent.scrollController.keyboardOverlap = newBottomInset
+            parent.session.scrollController.keyboardOverlap = newBottomInset
             if abs(tv.contentInset.bottom - newBottomInset) > 0.5 {
                 tv.contentInset.bottom = newBottomInset
                 tv.publishScrollMetrics()
@@ -437,13 +782,14 @@ struct RetroTextEditor: UIViewRepresentable {
                     let caret = tv.caretRect(for: range.end)
                     tv.scrollRectToVisible(caret.insetBy(dx: 0, dy: -16), animated: true)
                 }
+                tv.onVisualChanged?()
             }
         }
 
         private func notifyDismissOnce() {
             guard !didNotifyDismissForSession else { return }
             didNotifyDismissForSession = true
-            parent.onKeyboardDismissed()
+            parent.session.onKeyboardDismissed()
         }
     }
 }
@@ -454,7 +800,12 @@ struct RetroScrollbarView: View {
     let metrics: RetroFrameMetrics
     let controller: RetroScrollController
 
+    @Environment(\.crtBarrelTransform) private var barrelTransform
+    @Environment(CRTTextInputBridge.self) private var textInputBridge
+
     @State private var dragStartProgress: CGFloat?
+    @State private var dragStartLogicalY: CGFloat = 0
+    @State private var trackFrameInCRT: CGRect = .zero
     @State private var isHoldingDown = false
     @State private var holdScrollTask: Task<Void, Never>?
 
@@ -474,28 +825,38 @@ struct RetroScrollbarView: View {
                     let offsetY = travel * controller.metrics.progress
 
                     ZStack(alignment: .top) {
-                        Color.clear.contentShape(Rectangle())
+                        Color.clear
 
                         thumbCapsule
                             .frame(width: barWidth, height: thumbH)
                             .offset(y: offsetY)
                     }
+                    .crtHitAdjusted()
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .named(CRTCoordinateSpace.name))
+                    } action: { frame in
+                        if trackFrameInCRT != frame {
+                            trackFrameInCRT = frame
+                        }
+                    }
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
                                 guard travel > 0 else { return }
+                                let logicalCurrentY = logicalTrackY(for: value.location)
                                 if dragStartProgress == nil {
-                                    let y = value.startLocation.y
-                                    if y >= offsetY && y <= offsetY + thumbH {
+                                    let logicalStartY = logicalTrackY(for: value.startLocation)
+                                    dragStartLogicalY = logicalStartY
+                                    if logicalStartY >= offsetY && logicalStartY <= offsetY + thumbH {
                                         dragStartProgress = controller.metrics.progress
                                     } else {
-                                        let jumped = min(1, max(0, (y - thumbH * 0.5) / travel))
+                                        let jumped = min(1, max(0, (logicalStartY - thumbH * 0.5) / travel))
                                         dragStartProgress = jumped
                                         controller.scrollToProgress(jumped)
                                     }
                                 }
                                 if let start = dragStartProgress {
-                                    controller.scrollToProgress(start + value.translation.height / travel)
+                                    controller.scrollToProgress(start + (logicalCurrentY - dragStartLogicalY) / travel)
                                 }
                             }
                             .onEnded { _ in dragStartProgress = nil }
@@ -509,9 +870,23 @@ struct RetroScrollbarView: View {
             // Mantém a scrollbar e o botão ▼ visíveis acima do teclado do sistema quando aberto
             .padding(.bottom, max(14 * scale, controller.keyboardOverlap + 10 * scale))
             .padding(.trailing, 14 * scale)
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named(CRTCoordinateSpace.name))
+            } action: { frame in
+                textInputBridge.setExcludedFrame(frame, for: "scrollbar")
+            }
             .transition(.opacity)
-            .onDisappear(perform: stopContinuousScroll)
+            .onDisappear {
+                stopContinuousScroll()
+                textInputBridge.setExcludedFrame(.zero, for: "scrollbar")
+            }
         }
+    }
+
+    private func logicalTrackY(for localPoint: CGPoint) -> CGFloat {
+        guard barrelTransform.isActive, !trackFrameInCRT.isEmpty else { return localPoint.y }
+        let screenPoint = CGPoint(x: trackFrameInCRT.minX + localPoint.x, y: trackFrameInCRT.minY + localPoint.y)
+        return barrelTransform.screenToLogical(screenPoint).y - trackFrameInCRT.minY
     }
 
     private var thumbCapsule: some View {
@@ -526,7 +901,6 @@ struct RetroScrollbarView: View {
             }
             .padding(.vertical, 12 * scale)
         }
-        .contentShape(Capsule())
     }
 
     private var gripLines: some View {
@@ -551,7 +925,7 @@ struct RetroScrollbarView: View {
         }
         .frame(width: barWidth, height: barWidth)
         .opacity(isHoldingDown ? 0.65 : 1.0)
-        .contentShape(Rectangle())
+        .crtHitAdjusted()
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in

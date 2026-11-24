@@ -1,27 +1,83 @@
 import SwiftUI
+import Observation
+
+enum MorphRoute: Hashable {
+    case editor
+}
+
+/// Roteador SwiftUI puro (sem UINavigationController) para que todas as telas futuras
+/// fiquem dentro do passe Metal da TV sem quebrar a distorção de barril.
+@MainActor
+@Observable
+final class MorphRouter {
+    private(set) var path: [MorphRoute] = []
+
+    var current: MorphRoute? { path.last }
+
+    func push(_ route: MorphRoute) { path.append(route) }
+    func pop() { if !path.isEmpty { path.removeLast() } }
+    func popToRoot() { path.removeAll() }
+}
 
 struct ContentView: View {
     private let screenCenter = Color(red: 238.0 / 255, green: 230.0 / 255, blue: 184.0 / 255) // #EEE6B8
     private let screenEdge = Color(red: 210.0 / 255, green: 194.0 / 255, blue: 122.0 / 255)   // #D2C27A
 
+    @State private var router = MorphRouter()
+    @State private var crtConfig = CRTBarrelConfig()
+    @State private var textInputBridge = CRTTextInputBridge()
+
     var body: some View {
         GeometryReader { geo in
+            let transform = CRTBarrelTransform(
+                containerSize: geo.size,
+                curvature: CGFloat(crtConfig.curvature)
+            )
+
             ZStack {
                 Color.black
 
-                // Tela interna (fundo com sangria + UI navegável + filtro CRT Metal sobre toda a tela)
+                // 1. Tela interna 100% SwiftUI sob passe único Metal (barril + bolinhas + iluminação)
                 ZStack {
-                    screenBackground(for: geo.size)
+                    screenBackground
 
-                    NavigationStack {
-                        HomeView()
-                    }
-                    .frame(width: geo.size.width * 0.826, height: geo.size.height * 0.815)
-
-                    CRTScreenFilterView(containerSize: geo.size)
+                    currentScreen
+                        .frame(
+                            width: transform.openingRect.width,
+                            height: transform.openingRect.height
+                        )
                 }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .coordinateSpace(name: CRTCoordinateSpace.name)
+                .environment(\.crtBarrelTransform, transform)
+                .environment(router)
+                .environment(crtConfig)
+                .environment(textInputBridge)
                 .compositingGroup()
+                .layerEffect(
+                    ShaderLibrary.crtScreenEffect(
+                        .float2(transform.openingRect.minX, transform.openingRect.minY),
+                        .float2(transform.openingRect.width, transform.openingRect.height),
+                        .float(Float(transform.curvature)),
+                        .float(Float(crtConfig.vignetteStrength)),
+                        .float(Float(crtConfig.bezelShadowStrength)),
+                        .float(Float(crtConfig.glassGlareStrength))
+                    ),
+                    maxSampleOffset: transform.maxSampleOffset
+                )
 
+                // 2. Input UIKit invisível fora do shader Metal (somente durante edição de texto)
+                if let session = textInputBridge.session {
+                    CRTTextInputOverlay(
+                        session: session,
+                        editorFrame: textInputBridge.editorFrameInCRT,
+                        excludedFrames: textInputBridge.excludedFramesInCRT,
+                        barrelTransform: transform
+                    )
+                    .frame(width: geo.size.width, height: geo.size.height)
+                }
+
+                // 3. Moldura física da TV por cima, ocupando 100% da tela
                 Image("borda_tv")
                     .resizable()
                     .allowsHitTesting(false)
@@ -31,23 +87,35 @@ struct ContentView: View {
         .statusBarHidden(true)
     }
 
-    private func screenBackground(for size: CGSize) -> some View {
-        let radius = min(size.width, size.height) * 0.11
+    @ViewBuilder
+    private var currentScreen: some View {
+        ZStack {
+            switch router.current {
+            case nil:
+                HomeView()
+                    .transition(.opacity)
+            case .editor:
+                TextView()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: router.current)
+    }
 
-        return RoundedRectangle(cornerRadius: radius, style: .continuous)
+    /// Fundo cobre 100% atrás da moldura RGBA para evitar qualquer fresta preta em curvaturas altas.
+    private var screenBackground: some View {
+        Rectangle()
             .fill(
                 EllipticalGradient(
                     colors: [screenCenter, screenEdge],
                     center: .center,
-                    startRadiusFraction: 0.10,
-                    endRadiusFraction: 0.58
+                    startRadiusFraction: 0.09,
+                    endRadiusFraction: 0.522
                 )
             )
-            .frame(width: size.width * 0.90, height: size.height * 0.90)
     }
 }
 
 #Preview {
     ContentView()
 }
-
