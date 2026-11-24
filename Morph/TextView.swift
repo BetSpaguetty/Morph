@@ -3,6 +3,7 @@ import SwiftUI
 struct TextView: View {
     @Environment(MorphRouter.self) private var router
     @Environment(CRTBarrelConfig.self) private var crtConfig
+    @Environment(MorphKeyboardVisualConfig.self) private var keyboardConfig
     @Environment(CRTTextInputBridge.self) private var textInputBridge
 
     @State private var interpretador = Interpretador()
@@ -36,6 +37,10 @@ struct TextView: View {
         isEditingText || interpretador.lote.isEmpty || !hasText
     }
 
+    private var isVirtualKeyboardVisible: Bool {
+        isShowingEditor && scrollController.isFocused && !isDismissingScreen
+    }
+
     private var hasInterpretedCurrentText: Bool {
         !interpretador.lote.isEmpty && interpretador.textoDoLote == trimmedText
     }
@@ -55,6 +60,10 @@ struct TextView: View {
     var body: some View {
         GeometryReader { containerGeo in
             let metrics = RetroFrameMetrics(containerSize: containerGeo.size)
+            let bodySize = CGSize(
+                width: metrics.frameSize.width,
+                height: max(120, metrics.frameSize.height - metrics.headerHeight)
+            )
 
             VStack(spacing: 0) {
                 RetroHeaderBar(
@@ -70,7 +79,23 @@ struct TextView: View {
                     statusOverlay(metrics: metrics)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .zIndex(0)
+
+                if isVirtualKeyboardVisible {
+                    MorphVirtualKeyboardView(
+                        bodySize: bodySize,
+                        frameMetrics: metrics,
+                        visualConfig: keyboardConfig,
+                        startsCapitalized: texto.isEmpty,
+                        onInsert: { scrollController.insertText($0) },
+                        onDeleteBackward: { scrollController.deleteBackward() },
+                        onDismiss: { scrollController.resignFocus() }
+                    )
+                    .zIndex(2)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .animation(.easeInOut(duration: 0.2), value: isVirtualKeyboardVisible)
             .clipShape(RoundedRectangle(cornerSize: metrics.cornerSize, style: .circular))
             .overlay(
                 RetroWindowFrameShape(metrics: metrics)
@@ -89,6 +114,7 @@ struct TextView: View {
             .onAppear { syncTextInputSession(metrics: metrics) }
             .onChange(of: metrics) { _, newMetrics in syncTextInputSession(metrics: newMetrics) }
             .onChange(of: isShowingEditor) { _, _ in syncTextInputSession(metrics: metrics) }
+            .onChange(of: scrollController.isFocused) { _, _ in syncTextInputSession(metrics: metrics) }
             .onChange(of: focusRequestID) { _, _ in syncTextInputSession(metrics: metrics) }
         }
         .sheet(isPresented: $showingSettingsSheet, onDismiss: {
@@ -97,6 +123,7 @@ struct TextView: View {
             SettingsSheetView(
                 interpretador: interpretador,
                 crtConfig: crtConfig,
+                keyboardConfig: keyboardConfig,
                 texto: $texto,
                 modo: $modo,
                 comEvidencia: $comEvidencia,
@@ -257,7 +284,8 @@ struct TextView: View {
                 metrics: metrics,
                 scrollController: scrollController,
                 focusRequestID: focusRequestID,
-                useSystemKeyboard: true,
+                useSystemKeyboard: false,
+                isVirtualKeyboardVisible: isVirtualKeyboardVisible,
                 onKeyboardDismissed: aoAbaixarTeclado
             )
         } else {
@@ -287,7 +315,7 @@ struct TextView: View {
         }
     }
 
-    /// Ponto único de disparo ao encerrar o teclado (hoje teclado do sistema; futuramente teclado virtual na TV).
+    /// Ponto único de disparo ao encerrar o teclado virtual interno na TV.
     private func aoAbaixarTeclado() {
         guard !isDismissingScreen, !suppressKeyboardTrigger, !showingSettingsSheet else { return }
         guard hasText else { return }
@@ -349,5 +377,6 @@ struct TextView: View {
     TextView()
         .environment(MorphRouter())
         .environment(CRTBarrelConfig())
+        .environment(MorphKeyboardVisualConfig())
         .environment(CRTTextInputBridge())
 }

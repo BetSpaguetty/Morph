@@ -1,8 +1,18 @@
 import SwiftUI
 
+private enum SettingsTab: String, CaseIterable, Identifiable {
+    case teclado = "Teclado"
+    case telaCRT = "Tela CRT"
+    case ia = "IA"
+    case analise = "Análise"
+
+    var id: String { rawValue }
+}
+
 struct SettingsSheetView: View {
     @Bindable var interpretador: Interpretador
     @Bindable var crtConfig: CRTBarrelConfig
+    @Bindable var keyboardConfig: MorphKeyboardVisualConfig
     @Binding var texto: String
     @Binding var modo: ModoChamadas
     @Binding var comEvidencia: Bool
@@ -14,6 +24,7 @@ struct SettingsSheetView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    @State private var abaSelecionada: SettingsTab = .teclado
     @State private var referencia: ConfiguracaoResultado?
     @State private var latenciaAberta = true
     @State private var comparativoAberto = true
@@ -61,21 +72,42 @@ struct SettingsSheetView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    painelDebugCurvatura
-                    painelGemini
-                    painelExemplos
-                    painelConfiguracaoExecucao
-                    painelLatenciaETokens
-                    painelComparativo
-                    painelResultadosComparados
-                    painelParametrosEEvidencias
+            VStack(spacing: 0) {
+                Picker("Categoria", selection: $abaSelecionada) {
+                    ForEach(SettingsTab.allCases) { aba in
+                        Text(aba.rawValue).tag(aba)
+                    }
                 }
-                .padding()
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        switch abaSelecionada {
+                        case .teclado:
+                            painelTeclado
+                        case .telaCRT:
+                            painelDebugCurvatura
+                        case .ia:
+                            painelGemini
+                            painelConfiguracaoExecucao
+                            painelExemplos
+                        case .analise:
+                            painelLatenciaETokens
+                            painelComparativo
+                            painelResultadosComparados
+                            painelParametrosEEvidencias
+                        }
+                    }
+                    .padding()
+                }
             }
             .font(FontRegistrationManager.chicago(size: 14))
-            .navigationTitle("Ajustes e Diagnóstico IA")
+            .navigationTitle("Ajustes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -86,7 +118,67 @@ struct SettingsSheetView: View {
         }
     }
 
-    // MARK: - 0. Debug: Curvatura Barril e Sombreamento do Vidro CRT
+    // MARK: - 0a. Teclado Virtual (Relevo, Sombra e Camada Intermediária)
+
+    private var painelTeclado: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Toggle("Opacidade no fundo dos botões", isOn: $keyboardConfig.keyFillEnabled)
+                    Text("Adiciona preenchimento translúcido claro dentro de cada tecla.")
+                        .font(FontRegistrationManager.chicago(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Toggle("Sombra abaixo dos botões", isOn: $keyboardConfig.keyShadowEnabled)
+                    Text("Projeta uma leve sombra sob cada tecla com recuo ao pressionar.")
+                        .font(FontRegistrationManager.chicago(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Toggle("Fundo opaco atrás do teclado", isOn: $keyboardConfig.trayBackgroundEnabled)
+                    Text("Camada intermediária opaca separando o teclado da área de escrita.")
+                        .font(FontRegistrationManager.chicago(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                HStack(spacing: 10) {
+                    Button("Voltar ao estado chapado") {
+                        keyboardConfig.revertToFlat()
+                    }
+                    .font(FontRegistrationManager.chicago(size: 12))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(keyboardConfig.isFlatState)
+
+                    Spacer()
+
+                    if !keyboardConfig.isDefaultState {
+                        Button("Restaurar padrões") {
+                            keyboardConfig.restoreDefaults()
+                        }
+                        .font(FontRegistrationManager.chicago(size: 12))
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .font(FontRegistrationManager.chicago(size: 13))
+        } label: {
+            Text("Aparência do Teclado Virtual")
+                .font(FontRegistrationManager.chicago(size: 14))
+        }
+    }
+
+    // MARK: - 0b. Debug: Curvatura Barril e Sombreamento do Vidro CRT
 
     private var painelDebugCurvatura: some View {
         GroupBox {
