@@ -225,7 +225,9 @@ struct MorphSingleWordView: View {
         let typography = FontRegistrationManager.shared.resolveTypography(
             tomScore: scores[.tom],
             volumeScore: scores[.volume],
-            dominioScore: scores[.dominio]
+            dominioScore: scores[.dominio],
+            calorScore: scores[.calor],
+            felineContext: FontRegistrationManager.isFelineTerm(word)
         )
         let characters = Array(word)
         let fragScore = scores[.fragmentacao]
@@ -269,7 +271,9 @@ struct MorphSingleWordView: View {
         let typography = FontRegistrationManager.shared.resolveTypography(
             tomScore: scores[.tom],
             volumeScore: scores[.volume],
-            dominioScore: scores[.dominio]
+            dominioScore: scores[.dominio],
+            calorScore: scores[.calor],
+            felineContext: FontRegistrationManager.isFelineTerm(word)
         )
         let env = andamentoEnvelope
         let jitter = wordTensionJitter
