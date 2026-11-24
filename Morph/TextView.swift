@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct TextView: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(MorphRouter.self) private var router
+    @Environment(CRTBarrelConfig.self) private var crtConfig
+    @Environment(CRTTextInputBridge.self) private var textInputBridge
 
     @State private var interpretador = Interpretador()
     @State private var scrollController = RetroScrollController()
@@ -18,6 +20,9 @@ struct TextView: View {
     @State private var focusRequestID: Int = 0
 
     @State private var stageReferenceDate: Date = .now
+    @State private var stageScrollOffset: CGFloat = 0
+    @State private var stageDragStartOffset: CGFloat? = nil
+    @State private var stageContentHeight: CGFloat = 0
     @State private var cachedWordScores: [ParameterScores] = []
     @State private var tarefaInterpretacao: Task<Void, Never>?
 
@@ -26,6 +31,10 @@ struct TextView: View {
     }
 
     private var hasText: Bool { !trimmedText.isEmpty }
+
+    private var isShowingEditor: Bool {
+        isEditingText || interpretador.lote.isEmpty || !hasText
+    }
 
     private var hasInterpretedCurrentText: Bool {
         !interpretador.lote.isEmpty && interpretador.textoDoLote == trimmedText
@@ -54,6 +63,7 @@ struct TextView: View {
                     onSettings: abrirConfiguracoes,
                     onTapEmptySpace: { scrollController.resignFocus() }
                 )
+                .zIndex(1)
 
                 ZStack(alignment: .bottomTrailing) {
                     canvasArea(metrics: metrics)
@@ -76,14 +86,17 @@ struct TextView: View {
             )
             .padding(.horizontal, metrics.horizontalOuterPadding)
             .padding(.vertical, metrics.verticalOuterPadding)
+            .onAppear { syncTextInputSession(metrics: metrics) }
+            .onChange(of: metrics) { _, newMetrics in syncTextInputSession(metrics: newMetrics) }
+            .onChange(of: isShowingEditor) { _, _ in syncTextInputSession(metrics: metrics) }
+            .onChange(of: focusRequestID) { _, _ in syncTextInputSession(metrics: metrics) }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .containerBackground(.clear, for: .navigation)
         .sheet(isPresented: $showingSettingsSheet, onDismiss: {
             suppressKeyboardTrigger = false
         }) {
             SettingsSheetView(
                 interpretador: interpretador,
+                crtConfig: crtConfig,
                 texto: $texto,
                 modo: $modo,
                 comEvidencia: $comEvidencia,
@@ -101,22 +114,21 @@ struct TextView: View {
         .onDisappear {
             isDismissingScreen = true
             tarefaInterpretacao?.cancel()
+            textInputBridge.session = nil
+            textInputBridge.excludedFramesInCRT.removeAll()
         }
     }
 
-    // MARK: - Área Central (Editor com Caret SVG + Scrollbar Condicional vs Palco de Animações)
+    // MARK: - Área Central (Canvas Curvado com Caret SVG + Scrollbar Condicional vs Palco de Animações)
 
     @ViewBuilder
     private func canvasArea(metrics: RetroFrameMetrics) -> some View {
-        if isEditingText || interpretador.lote.isEmpty || !hasText {
+        if isShowingEditor {
             ZStack(alignment: .trailing) {
-                RetroTextEditor(
-                    text: $texto,
-                    metrics: metrics,
+                RetroTextCanvasView(
                     scrollController: scrollController,
-                    focusRequestID: focusRequestID,
-                    useSystemKeyboard: true,
-                    onKeyboardDismissed: aoAbaixarTeclado
+                    metrics: metrics,
+                    text: texto
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -128,10 +140,16 @@ struct TextView: View {
             .animation(.easeInOut(duration: 0.18), value: scrollController.metrics.needsScroll)
         } else {
             GeometryReader { geo in
+                let maxScroll = max(0, stageContentHeight - geo.size.height)
+                let clampedOffset = min(maxScroll, max(0, stageScrollOffset))
+
                 TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
                     let elapsed = context.date.timeIntervalSince(stageReferenceDate)
 
-                    ScrollView(.vertical, showsIndicators: false) {
+                    // Contêiner rolável 100% SwiftUI (evita UIScrollView dentro de .compositingGroup().layerEffect)
+                    ZStack(alignment: .top) {
+                        Color.clear
+
                         VStack(spacing: 24) {
                             Spacer(minLength: max(24, geo.size.height * 0.14))
 
@@ -153,9 +171,32 @@ struct TextView: View {
                             Spacer(minLength: 40)
                         }
                         .frame(minHeight: geo.size.height)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                            if abs(stageContentHeight - height) > 0.5 {
+                                stageContentHeight = height
+                            }
+                        }
+                        .offset(y: -clampedOffset)
                     }
-                    .contentShape(Rectangle())
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                    .clipped()
+                    .crtHitAdjusted()
                     .onTapGesture { voltarParaEdicao() }
+                    .gesture(
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { value in
+                                guard maxScroll > 0 else { return }
+                                if stageDragStartOffset == nil {
+                                    stageDragStartOffset = clampedOffset
+                                }
+                                let base = stageDragStartOffset ?? 0
+                                stageScrollOffset = min(maxScroll, max(0, base - value.translation.height))
+                            }
+                            .onEnded { _ in
+                                stageDragStartOffset = nil
+                            }
+                    )
                 }
             }
         }
@@ -182,6 +223,7 @@ struct TextView: View {
                 Button("Ajustes") { abrirConfiguracoes() }
                     .font(.system(size: 12 * scale, weight: .bold, design: .monospaced))
                     .underline()
+                    .crtHitAdjusted()
                     .buttonStyle(.plain)
             }
             .foregroundStyle(RetroTerminalStyle.ink)
@@ -192,20 +234,44 @@ struct TextView: View {
                     .fill(Color(red: 238.0 / 255, green: 230.0 / 255, blue: 184.0 / 255).opacity(0.92))
                     .stroke(RetroTerminalStyle.ink.opacity(0.65), lineWidth: max(1.5, 2 * scale))
             )
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named(CRTCoordinateSpace.name))
+            } action: { frame in
+                textInputBridge.setExcludedFrame(frame, for: "statusBanner")
+            }
+            .onDisappear {
+                textInputBridge.setExcludedFrame(.zero, for: "statusBanner")
+            }
             .padding(.horizontal, 20 * scale)
             .padding(.bottom, 14 * scale)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // MARK: - Navegação, Teclado e Execução da IA
+    // MARK: - Sessão de Input, Navegação, Teclado e Execução da IA
+
+    private func syncTextInputSession(metrics: RetroFrameMetrics) {
+        if isShowingEditor && !isDismissingScreen {
+            textInputBridge.session = CRTTextInputBridge.Session(
+                text: $texto,
+                metrics: metrics,
+                scrollController: scrollController,
+                focusRequestID: focusRequestID,
+                useSystemKeyboard: true,
+                onKeyboardDismissed: aoAbaixarTeclado
+            )
+        } else {
+            textInputBridge.session = nil
+        }
+    }
 
     private func sairParaInicio() {
         isDismissingScreen = true
         suppressKeyboardTrigger = true
         tarefaInterpretacao?.cancel()
         scrollController.resignFocus()
-        dismiss()
+        textInputBridge.session = nil
+        router.pop()
     }
 
     private func abrirConfiguracoes() {
@@ -269,6 +335,7 @@ struct TextView: View {
             await MainActor.run {
                 if !interpretador.lote.isEmpty && !isDismissingScreen {
                     stageReferenceDate = .now
+                    stageScrollOffset = 0
                     withAnimation(.easeInOut(duration: 0.25)) {
                         isEditingText = false
                     }
@@ -280,4 +347,7 @@ struct TextView: View {
 
 #Preview {
     TextView()
+        .environment(MorphRouter())
+        .environment(CRTBarrelConfig())
+        .environment(CRTTextInputBridge())
 }

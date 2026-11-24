@@ -120,7 +120,7 @@ struct RetroHeaderBar: View {
 
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
+                .crtHitAdjusted()
                 .onTapGesture { onTapEmptySpace?() }
 
             HStack(spacing: 10 * metrics.headerScale) {
@@ -140,7 +140,7 @@ struct RetroHeaderBar: View {
                 .foregroundStyle(RetroTerminalStyle.ink)
                 .padding(.horizontal, buttonPadX)
                 .frame(height: metrics.headerHeight)
-                .contentShape(Rectangle())
+                .crtHitAdjusted()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
