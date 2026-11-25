@@ -3,6 +3,7 @@ import SwiftUI
 private enum SettingsTab: String, CaseIterable, Identifiable {
     case teclado = "Teclado"
     case telaCRT = "Tela CRT"
+    case som = "Som"
     case ia = "IA"
     case analise = "Análise"
 
@@ -10,6 +11,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 }
 
 struct SettingsSheetView: View {
+    @AppStorage("morph.sineToneEnabled") private var sineToneEnabled = true
     @Bindable var interpretador: Interpretador
     @Bindable var crtConfig: CRTBarrelConfig
     @Bindable var keyboardConfig: MorphKeyboardVisualConfig
@@ -92,6 +94,8 @@ struct SettingsSheetView: View {
                             painelTeclado
                         case .telaCRT:
                             painelDebugCurvatura
+                        case .som:
+                            painelSom
                         case .ia:
                             painelGemini
                             painelConfiguracaoExecucao
@@ -119,6 +123,19 @@ struct SettingsSheetView: View {
     }
 
     // MARK: - 0a. Teclado Virtual (Relevo, Sombra e Camada Intermediária)
+
+    private var painelSom: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Som senoidal de 130 Hz", isOn: $sineToneEnabled)
+                Text("Toca enquanto o app estiver em primeiro plano. Desative aqui quando quiser silenciar.")
+                    .font(FontRegistrationManager.chicago(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        } label: {
+            Label("Áudio", systemImage: "waveform")
+        }
+    }
 
     private var painelTeclado: some View {
         GroupBox {
