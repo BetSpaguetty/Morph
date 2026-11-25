@@ -279,11 +279,11 @@ final class CRTMagneticTouchEngine {
 
         // 1. Parâmetros calibrados de referência
         let cfg = CRTTouchConfig.default
-        assert(cfg.radius == 40.0)
+        assert(cfg.radius == 70.0)
         assert(abs(cfg.force - 0.10) < 1e-6)
         assert(abs(cfg.falloff - 1.00) < 1e-6)
         assert(abs(cfg.vortex - (-0.05)) < 1e-6)
-        assert(abs(cfg.rgbSplit - 1.0) < 1e-6)
+        assert(abs(cfg.rgbSplit - 10.0) < 1e-6)
         assert(abs(cfg.centerLuminance - (-0.04)) < 1e-6)
         assert(abs(cfg.scanlines - 0.35) < 1e-6)
         assert(abs(cfg.decayTime - 0.30) < 1e-6)

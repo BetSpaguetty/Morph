@@ -26,11 +26,11 @@ nonisolated struct CRTTouchConfig: Equatable, Sendable {
     static let `default` = CRTTouchConfig()
 
     var isEnabled: Bool = true
-    var radius: CGFloat = 40.0                   // Influência: 40 px
+    var radius: CGFloat = 70.0                   // Raio de influência: 70 pt
     var force: CGFloat = 0.10                    // Força e polaridade: +10% (repulsão)
     var falloff: CGFloat = 1.00                  // Suavidade na borda: 1.00
     var vortex: CGFloat = -0.05                  // Torção magnética: -0.05
-    var rgbSplit: CGFloat = 1.0                  // Separação RGB: 1.0 px
+    var rgbSplit: CGFloat = 10.0                  // Separação RGB ao toque: 2.0 px
     var centerLuminance: CGFloat = -0.04         // Mancha de luminância central: -4%
     var scanlines: CGFloat = 0.35                // Scanlines reveladas no toque: 35%
     var decayTime: CGFloat = 0.30                // Tempo de dissipação: 0.30 s
