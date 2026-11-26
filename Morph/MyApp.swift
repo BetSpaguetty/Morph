@@ -5,6 +5,12 @@ import SwiftUI
     @AppStorage("morph.sineToneEnabled") private var sineToneEnabled = true
     @State private var tonePlayer = SineTonePlayer()
 
+    init() {
+        #if DEBUG
+        MorphRendererSelfCheck.runSelfCheck()
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
