@@ -75,9 +75,13 @@ struct WordAnimationPlan: Equatable, Sendable {
                 return 0.60
             case .tensGlitch:
                 return 0.48
-            case .andRollIn, .ativShakeY, .tensTada, .tensSqueezeExpand, .volGritoExplosivo, .ativRicocheteLateral:
+            case .andRollIn, .ativShakeY, .tensTada, .tensSqueezeExpand, .volGritoExplosivo, .ativRicocheteLateral, .kwHeartbeatBurst:
                 return 0.80
-            case .luzGlowIn, .luzFlicker, .luzFlickerIn, .abertTrackingContract, .distArrastoTemporal, .pesoAfundarComPeso:
+            case .kwBolhasSabao:
+                return 0.95
+            case .kwRoloCassino, .kwTracoParaTinta:
+                return 1.10
+            case .luzGlowIn, .luzFlicker, .luzFlickerIn, .abertTrackingContract, .distArrastoTemporal, .pesoAfundarComPeso, .kwPenduloNewton:
                 return 1.15
             case .valImpressaoCMYK:
                 return 1.30
@@ -93,7 +97,7 @@ struct WordAnimationPlan: Equatable, Sendable {
         guard let id = entrance?.effectID else { return false }
         switch id {
         case .tensTensaoContida, .volGritoExplosivo, .pesoEsmagar, .pesoAfundarComPeso,
-             .valCaleidoscopioPrismatico, .valImpressaoCMYK, .pesoRastroVertical:
+             .valCaleidoscopioPrismatico, .valImpressaoCMYK, .pesoRastroVertical, .kwTracoParaTinta:
             return false
         default:
             return true
@@ -102,13 +106,21 @@ struct WordAnimationPlan: Equatable, Sendable {
 
     /// Verdadeiro quando o estado estacionário (sem contar a Entrada 1x) exige renderização caractere a caractere.
     var steadyNeedsPerChar: Bool {
-        if staticStructure?.effectID == .fluidDerretido { return true }
+        if let sid = staticStructure?.effectID {
+            switch sid {
+            case .fluidDerretido, .kwArcoCurvado, .kwEscadaDiagonal, .kwLinhaDesconstruida:
+                return true
+            default:
+                break
+            }
+        }
         if surface?.effectID == .valFluxoArcoIris { return true }
         if usesCoupledMotionSurfaceColor && continuous?.effectID == .fluidEspelhoLiquido { return true }
         if let cid = continuous?.effectID {
             switch cid {
             case .fragCisao, .calMiragemCalor, .fluidRefracaoSubmersa, .andLetargia,
-                 .tensPressaoCrescente, .volPanoramica3D, .fluidRigidezMecanica, .pesoFlutuarTopo:
+                 .tensPressaoCrescente, .volPanoramica3D, .fluidRigidezMecanica, .pesoFlutuarTopo,
+                 .kwRespiracaoOrganica, .kwTontura:
                 return false
             default:
                 return true
@@ -125,6 +137,7 @@ struct WordAnimationPlan: Equatable, Sendable {
         continuous?.effectID == .andLetargia
             || continuous?.effectID == .fluidSubmarino
             || entrance?.effectID == .distArrastoTemporal
+            || entrance?.effectID == .kwRoloCassino
     }
 
     var uses3DRotationModifier: Bool {
@@ -141,6 +154,8 @@ struct WordAnimationPlan: Equatable, Sendable {
             || continuous?.effectID == .tensAmeacaLatente
             || continuous?.effectID == .fluidRigidezMecanica
             || continuous?.effectID == .fluidOndaInclinacao
+            || continuous?.effectID == .kwCaosImprevisivel
+            || continuous?.effectID == .kwTontura
     }
 
     var usesGlowModifier: Bool {
@@ -149,6 +164,170 @@ struct WordAnimationPlan: Equatable, Sendable {
             || entrance?.effectID == .luzFlicker
             || entrance?.effectID == .luzFlickerIn
             || continuous?.effectID == .calFogoVivo
+            || continuous?.effectID == .kwLetreiroNeon
+    }
+
+    /// Folga horizontal por lado (pt) reservada para efeitos que escalam, inclinam ou deslocam
+    /// visualmente para fora da caixa de `sizeThatFits`, evitando palavras aglutinadas.
+    var horizontalVisualOverhang: CGFloat {
+        let estW = CGFloat(max(1, word.count)) * typography.fontSize * 0.62
+        var maxExtraScaleX: Double = 0
+        var shiftX: Double = 0
+
+        if let s = staticStructure {
+            switch s.effectID {
+            case .abertUltraEstirado:
+                let k = min(1.0, max(0.45, s.intensity * 0.85))
+                maxExtraScaleX = max(maxExtraScaleX, 0.26 * k)
+            default:
+                break
+            }
+        }
+
+        if let c = continuous {
+            switch c.effectID {
+            case .domLenteInflada:
+                let k = min(1.0, c.intensity)
+                maxExtraScaleX = max(maxExtraScaleX, 0.22 * k)
+                shiftX += 8.0 * k
+            case .kwCaosImprevisivel:
+                maxExtraScaleX = max(maxExtraScaleX, 0.26)
+                shiftX += 7.0
+            case .kwRespiracaoOrganica:
+                maxExtraScaleX = max(maxExtraScaleX, 0.09)
+            case .tensPressaoCrescente:
+                maxExtraScaleX = max(maxExtraScaleX, 0.20 * c.intensity)
+                shiftX += 3.5
+            case .ativPulaPulaElastico:
+                maxExtraScaleX = max(maxExtraScaleX, 0.22 * c.intensity)
+            case .ativPulsoRitmicoRegular:
+                maxExtraScaleX = max(maxExtraScaleX, 0.20 * c.intensity)
+            case .fragCisao:
+                shiftX += 12.0 * c.intensity
+            case .calMiragemCalor:
+                shiftX += 7.5 * c.intensity
+            case .fluidRefracaoSubmersa:
+                shiftX += 6.5 * c.intensity
+            case .fluidOndaInclinacao, .calFogoVivo, .andLetargia, .kwTontura:
+                shiftX += 8.0
+            case .tensOndaSismica, .tensVibracaoPalavra, .ativMicroOrbitas, .pesoFlutuacaoZeroG, .pesoFallingLeaves, .kwStopMotion6fps:
+                shiftX += 5.0
+            default:
+                break
+            }
+        }
+
+        if let o = overlay {
+            switch o.effectID {
+            case .volBerroDistorcido:
+                maxExtraScaleX = max(maxExtraScaleX, 0.20 * o.intensity)
+                shiftX += 3.0
+            case .volOndasEco:
+                maxExtraScaleX = max(maxExtraScaleX, 0.24 * o.intensity)
+            case .fragCorteAoMeio:
+                shiftX += 7.0 * o.intensity
+            case .fragRachado:
+                shiftX += 6.0 * o.intensity
+            case .luzEscurecimento:
+                shiftX += 9.0 * min(1.0, o.intensity)
+            case .distVisaoDupla:
+                shiftX += 8.5 * o.intensity
+            case .volEcoDirecional:
+                shiftX += 11.0 * o.intensity
+            case .valSombrasGemeas:
+                shiftX += 8.0 * o.intensity
+            case .valAberracaoCromatica, .valCartasCMYOrbita:
+                shiftX += 5.5 * o.intensity
+            case .valAnaglifo3D:
+                shiftX += 4.0 * o.intensity
+            case .kwSombraOrbitante:
+                shiftX += 10.0
+            case .calGelidoQuebradico:
+                shiftX += 6.0
+            case .kwTarjaCensurada:
+                shiftX += 4.0
+            case .kwEstouroPopArt:
+                shiftX += 6.0
+            default:
+                break
+            }
+        }
+
+        let total = Double(estW) * maxExtraScaleX * 0.5 + shiftX
+        guard total > 0.1 else { return 0 }
+        return min(34.0, CGFloat(ceil(total)))
+    }
+
+    /// Folga vertical (topo/base em pt) reservada para efeitos que esticam ou deslocam entre linhas.
+    var verticalVisualOverhang: (top: CGFloat, bottom: CGFloat) {
+        var top: CGFloat = 0
+        var bottom: CGFloat = 0
+
+        if let s = staticStructure {
+            switch s.effectID {
+            case .fluidDerretido:
+                bottom = max(bottom, typography.fontSize * 0.42)
+            case .kwArcoCurvado:
+                top = max(top, 12)
+                bottom = max(bottom, 12)
+            case .kwEscadaDiagonal:
+                top = max(top, 18)
+                bottom = max(bottom, 18)
+            case .kwLinhaDesconstruida:
+                top = max(top, 8)
+                bottom = max(bottom, 8)
+            case .abertUltraCondensado:
+                top = max(top, typography.fontSize * 0.18)
+                bottom = max(bottom, typography.fontSize * 0.18)
+            default:
+                break
+            }
+        }
+
+        if let c = continuous {
+            switch c.effectID {
+            case .fluidFluidoViscoso:
+                bottom = max(bottom, typography.fontSize * 0.44)
+            case .pesoFlutuarTopo, .ativPulaPulaElastico, .fluidDancaTipografica:
+                top = max(top, 16)
+            case .fluidWave:
+                top = max(top, 13)
+            case .kwArcoFlexivel:
+                top = max(top, 14)
+                bottom = max(bottom, 14)
+            case .fluidOndulacaoVertical, .fluidEspelhoLiquido, .fluidSubmarino,
+                 .pesoFlutuacaoZeroG, .pesoAntiGravity, .pesoFallingLeaves, .pesoMovieCredits,
+                 .domLenteInflada, .kwCaosImprevisivel:
+                top = max(top, 10)
+                bottom = max(bottom, 10)
+            case .kwTontura:
+                top = max(top, 6)
+                bottom = max(bottom, 6)
+            default:
+                break
+            }
+        }
+
+        if let e = entrance, e.effectID == .pesoAfundarComPeso {
+            bottom = max(bottom, CGFloat(min(20.0, 14.0 * e.intensity)))
+        }
+
+        if let o = overlay {
+            switch o.effectID {
+            case .kwSombraOrbitante:
+                top = max(top, 8)
+                bottom = max(bottom, 8)
+            case .calNevoaAscendente, .calSmokeOut:
+                top = max(top, 12)
+            case .kwEstouroPopArt:
+                top = max(top, 6)
+                bottom = max(bottom, 6)
+            default:
+                break
+            }
+        }
+
+        return (min(24.0, ceil(top)), min(24.0, ceil(bottom)))
     }
 }
 
@@ -165,6 +344,7 @@ enum WordEffectResolver {
     ) -> [WordAnimationPlan] {
         guard !tokens.isEmpty else { return [] }
 
+        let wordTriggers = MorphWordTriggerCatalog.matchPhrase(tokens: tokens)
         var plans: [WordAnimationPlan] = tokens.enumerated().map { index, word in
             let scores = index < scoresPerWord.count ? scoresPerWord[index] : ParameterScores()
             return resolveWord(
@@ -172,7 +352,8 @@ enum WordEffectResolver {
                 wordIndex: index,
                 scores: scores,
                 phraseSeed: phraseSeed,
-                baseFontSize: baseFontSize
+                baseFontSize: baseFontSize,
+                forcedEffectID: wordTriggers[index]
             )
         }
 
@@ -220,7 +401,8 @@ enum WordEffectResolver {
         wordIndex: Int,
         scores: ParameterScores,
         phraseSeed: Int,
-        baseFontSize: CGFloat = 34.0
+        baseFontSize: CGFloat = 34.0,
+        forcedEffectID: MorphEffectID? = nil
     ) -> WordAnimationPlan {
         let fontSeed = Int(truncatingIfNeeded: MorphDeterministicHash.mix(phraseSeed, wordIndex, 911))
         let typography = FontRegistrationManager.shared.resolveTypography(
@@ -381,9 +563,42 @@ enum WordEffectResolver {
         ) {
             continuousSlot = nil
         }
+        var finalStatic = staticStructureSlot
+        var finalSurface = isDecorative ? nil : winners[.surface]
+        var finalEntrance = entranceSlot
+        var finalContinuous = continuousSlot
+        var finalOverlay = winners[.overlay]
+
+        // Gatilhos fixos por palavra-chave (18 regras): sempre aplicam no seu canal, deixando os demais livres.
+        if let triggerID = forcedEffectID ?? MorphWordTriggerCatalog.matchSingleWord(word) {
+            let spec = MorphEffectCatalog.spec(for: triggerID)
+            let mag = max(abs(scores[spec.parameter]), 4)
+            let forcedScore = spec.polarity == .negative ? -mag : mag
+            let slot = ResolvedEffectSlot(spec: spec, score: forcedScore)
+
+            switch spec.channel {
+            case .typography:
+                finalStatic = slot
+            case .surface:
+                if !isDecorative { finalSurface = slot }
+            case .entrance:
+                finalEntrance = slot
+            case .continuous:
+                finalContinuous = slot
+                if triggerID == .kwLetreiroNeon && !isDecorative {
+                    finalSurface = nil
+                }
+            case .overlay:
+                finalOverlay = slot
+                if triggerID == .kwEstouroPopArt && !isDecorative {
+                    finalSurface = nil
+                }
+            }
+        }
+
         let speedMultiplier = resolveSpeedMultiplier(
             ativacaoScore: scores[.ativacao],
-            ativacaoWonContinuous: continuousSlot?.parameter == .ativacao
+            ativacaoWonContinuous: finalContinuous?.parameter == .ativacao
         )
 
         return WordAnimationPlan(
@@ -391,11 +606,11 @@ enum WordEffectResolver {
             word: word,
             scores: scores,
             typography: typography,
-            staticStructure: staticStructureSlot,
-            surface: isDecorative ? nil : winners[.surface],
-            entrance: entranceSlot,
-            continuous: continuousSlot,
-            overlay: winners[.overlay],
+            staticStructure: finalStatic,
+            surface: finalSurface,
+            entrance: finalEntrance,
+            continuous: finalContinuous,
+            overlay: finalOverlay,
             speedMultiplier: speedMultiplier,
             isEcoMode: false
         )
@@ -654,5 +869,42 @@ enum WordEffectResolver {
         let heavyScores = Array(repeating: ParameterScores.single(.calor, score: -3), count: heavyTokens.count)
         let ecoPlans = resolvePhrase(tokens: heavyTokens, scoresPerWord: heavyScores, phraseSeed: 1)
         assert(ecoPlans.allSatisfy(\.isEcoMode), "Frase longa com >= 80% de efeito pesado deve ativar isEcoMode")
+
+        // 9. Gatilhos dedicados por palavra-chave (18 regras, mesmo com notas = 0 e termos compostos)
+        let keywordSamples: [(String, MorphEffectID)] = [
+            ("coração!", .kwHeartbeatBurst),
+            ("respiração", .kwRespiracaoOrganica),
+            ("neon", .kwLetreiroNeon),
+            ("sombra", .kwSombraOrbitante),
+            ("arco", .kwArcoCurvado),
+            ("escada", .kwEscadaDiagonal),
+            ("subida", .kwEscadaDiagonal),
+            ("palavrão", .kwTarjaCensurada),
+            ("cassino", .kwRoloCassino),
+            ("pêndulo", .kwPenduloNewton),
+            ("bolhas", .kwBolhasSabao),
+            ("dobrar", .kwArcoFlexivel),
+            ("quadrinho", .kwEstouroPopArt),
+            ("pintar", .kwTracoParaTinta),
+            ("Coraline", .kwStopMotion6fps),
+            ("bagunça", .kwLinhaDesconstruida),
+            ("escorrimento", .fluidFluidoViscoso),
+            ("caótico", .kwCaosImprevisivel),
+            ("tontura", .kwTontura),
+            ("bebida", .kwTontura)
+        ]
+        for (sample, expected) in keywordSamples {
+            let p = resolveWord(word: sample, wordIndex: 0, scores: ParameterScores(), phraseSeed: 1)
+            assert(p.allActiveSlots.contains { $0.effectID == expected }, "Palavra '\(sample)' deveria disparar \(expected)")
+        }
+        let bigramPlans = resolvePhrase(
+            tokens: ["Estilo", "Pop", "Art", "e", "Stop", "Motion"],
+            scoresPerWord: Array(repeating: ParameterScores(), count: 6),
+            phraseSeed: 1
+        )
+        assert(bigramPlans[1].overlay?.effectID == .kwEstouroPopArt && bigramPlans[2].overlay?.effectID == .kwEstouroPopArt)
+        assert(bigramPlans[4].continuous?.effectID == .kwStopMotion6fps && bigramPlans[5].continuous?.effectID == .kwStopMotion6fps)
+        let arcoIrisPlan = resolveWord(word: "arco-íris", wordIndex: 0, scores: ParameterScores(), phraseSeed: 1)
+        assert(arcoIrisPlan.staticStructure == nil, "'arco-íris' não deve disparar Arco Curvado")
     }
 }

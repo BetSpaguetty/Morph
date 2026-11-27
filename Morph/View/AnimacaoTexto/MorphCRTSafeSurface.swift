@@ -103,9 +103,15 @@ enum MorphSurfaceResolver {
                 return MorphCRTSafePalette.glacialBlue
             case .fluidEspelhoLiquido, .fluidSubmarino, .fluidLuzPiscina, .fluidRefracaoSubmersa:
                 return MorphCRTSafePalette.oceanBright
+            case .kwLetreiroNeon:
+                return MorphCRTSafePalette.deepPink
             default:
                 break
             }
+        }
+
+        if plan.overlay?.effectID == .kwEstouroPopArt && plan.surface == nil {
+            return MorphCRTSafePalette.deepCrimson
         }
 
         if plan.scores[.calor] != 0 {
@@ -294,12 +300,17 @@ enum MorphSurfaceResolver {
                 )
             case .fluidRefracaoSubmersa:
                 return AnyShapeStyle(Color(red: 0.06, green: 0.38, blue: 0.64))
+            case .kwLetreiroNeon:
+                return AnyShapeStyle(MorphCRTSafePalette.deepPink)
             default:
                 break
             }
         }
 
-        // 4. Overlay térmico de gelo (quando Calor - ganhou Overlay e Canal 2 está livre)
+        // 4. Overlay térmico de gelo e Pop-Art (quando Canal 2 está livre)
+        if plan.overlay?.effectID == .kwEstouroPopArt {
+            return AnyShapeStyle(MorphCRTSafePalette.deepCrimson)
+        }
         if plan.overlay?.effectID == .calGelidoQuebradico {
             return AnyShapeStyle(MorphCRTSafePalette.safeIceGradient)
         }

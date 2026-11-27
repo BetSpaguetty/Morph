@@ -31,13 +31,13 @@ struct MorphWordsCanvasView: View, Equatable {
             let currentDist = plans[index].scores[.distancia]
             let nextDist = (index + 1 < plans.count) ? plans[index + 1].scores[.distancia] : currentDist
             switch max(currentDist, nextDist) {
-            case 0: return 10
-            case 1: return 22
+            case 0: return 14
+            case 1: return 24
             case 2: return 36
             case 3: return 52
             case 4: return 70
             case 5: return 92
-            default: return 10
+            default: return 14
             }
         }
     }
@@ -48,9 +48,13 @@ struct MorphWordsCanvasView: View, Equatable {
             let wordHash = MorphDeterministicHash.stableStringID(p.word)
             let sizeKey = Int(p.typography.fontSize.rounded()) &* 31
                 &+ MorphDeterministicHash.stableStringID(p.typography.familyName)
+                &+ MorphDeterministicHash.stableStringID(p.typography.weightLabel)
                 &+ p.scores[.abertura] &* 13
                 &+ p.scores[.distancia] &* 7
-                &+ (p.staticStructure?.effectID.rawValue.count ?? 0)
+                &+ MorphDeterministicHash.stableStringID(p.staticStructure?.effectID.rawValue ?? "")
+                &+ MorphDeterministicHash.stableStringID(p.continuous?.effectID.rawValue ?? "")
+                &+ MorphDeterministicHash.stableStringID(p.entrance?.effectID.rawValue ?? "")
+                &+ MorphDeterministicHash.stableStringID(p.overlay?.effectID.rawValue ?? "")
             acc = Int(truncatingIfNeeded: MorphDeterministicHash.mix(acc, wordHash ^ sizeKey, i))
         }
         return acc
@@ -142,11 +146,13 @@ struct MorphFlowLayout: Layout {
             var currentX = bounds.minX + max(0, (bounds.width - row.totalWidth) / 2.0)
             for item in row.items {
                 guard item.index < subviews.count else { continue }
-                let yPos = currentY + (row.maxHeight - item.size.height) / 2.0
+                let centerX = currentX + item.size.width * 0.5
+                let centerY = currentY + row.maxHeight * 0.5
+                // `.unspecified` impede o SwiftUI de truncar palavras com `...` caso a largura varie em ~1pt após a entrada 1x.
                 subviews[item.index].place(
-                    at: CGPoint(x: currentX, y: yPos),
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(item.size)
+                    at: CGPoint(x: centerX, y: centerY),
+                    anchor: .center,
+                    proposal: .unspecified
                 )
                 currentX += item.size.width + item.spacingAfter
             }

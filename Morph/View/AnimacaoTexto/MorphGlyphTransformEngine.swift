@@ -93,9 +93,13 @@ enum MorphGlyphTransformEngine {
             return 0.60
         case .tensGlitch:
             return 0.48
-        case .andRollIn, .ativShakeY, .tensTada, .tensSqueezeExpand, .volGritoExplosivo, .ativRicocheteLateral:
+        case .andRollIn, .ativShakeY, .tensTada, .tensSqueezeExpand, .volGritoExplosivo, .ativRicocheteLateral, .kwHeartbeatBurst:
             return 0.80
-        case .luzGlowIn, .luzFlicker, .luzFlickerIn, .abertTrackingContract, .distArrastoTemporal, .pesoAfundarComPeso:
+        case .kwBolhasSabao:
+            return 0.95
+        case .kwRoloCassino, .kwTracoParaTinta:
+            return 1.10
+        case .luzGlowIn, .luzFlicker, .luzFlickerIn, .abertTrackingContract, .distArrastoTemporal, .pesoAfundarComPeso, .kwPenduloNewton:
             return 1.15
         case .valImpressaoCMYK:
             return 1.30
@@ -188,6 +192,31 @@ enum MorphGlyphTransformEngine {
                 scaleX: 0.86,
                 scaleY: min(1.48, 1.0 + extra),
                 anchor: .top
+            )
+
+        case .kwArcoCurvado:
+            let n = max(1, totalChars)
+            let mid = Double(n - 1) * 0.5
+            let maxD = max(1.0, mid)
+            let norm = (Double(charIndex) - mid) / maxD
+            return MorphGlyphTransform(
+                dy: CGFloat((norm * norm - 0.5) * 24.0),
+                rotationDeg: norm * 22.0
+            )
+
+        case .kwEscadaDiagonal:
+            // Sobe da esquerda para a direita ("Escada - subida"), respeitando o teto vertical do palco CRT.
+            let n = max(1, totalChars)
+            let mid = Double(n - 1) * 0.5
+            let stepY = min(5.5, 36.0 / Double(max(1, n - 1)))
+            return MorphGlyphTransform(dy: CGFloat(-(Double(charIndex) - mid) * stepY))
+
+        case .kwLinhaDesconstruida:
+            let u1 = Double(MorphDeterministicHash.mix(charIndex, 1, 790) & 0xFFFF) / 65535.0
+            let u2 = Double(MorphDeterministicHash.mix(charIndex, 2, 791) & 0xFFFF) / 65535.0
+            return MorphGlyphTransform(
+                dy: CGFloat((u1 - 0.5) * 14.0),
+                rotationDeg: (u2 - 0.5) * 13.0
             )
 
         default:
@@ -552,6 +581,82 @@ enum MorphGlyphTransformEngine {
             let kP = MorphEasing.smoothstep(min(1.0, max(0.0, (t - 0.58) / 0.42)))
             return MorphGlyphTransform(opacity: kP)
 
+        case .kwHeartbeatBurst:
+            // 79. Heartbeat Burst: 0(0.5, a=0) -> 0.3(1.2, a=1) -> 0.5(0.9) -> 0.7(1.1) -> 1.0(1.0)
+            let t = charEntranceProgress(elapsed: elapsed, charIndex: charIndex, duration: dur, delayStep: 0.05)
+            if t >= 1.0 { return .identity }
+            let scale: Double
+            let alpha: Double
+            if t < 0.3 {
+                let k = MorphEasing.smoothstep(t / 0.3)
+                scale = 0.5 + 0.7 * k
+                alpha = k
+            } else if t < 0.5 {
+                let k = MorphEasing.smoothstep((t - 0.3) / 0.2)
+                scale = 1.2 - 0.3 * k
+                alpha = 1.0
+            } else if t < 0.7 {
+                let k = MorphEasing.smoothstep((t - 0.5) / 0.2)
+                scale = 0.9 + 0.2 * k
+                alpha = 1.0
+            } else {
+                let k = MorphEasing.smoothstep((t - 0.7) / 0.3)
+                scale = 1.1 - 0.1 * k
+                alpha = 1.0
+            }
+            return MorphGlyphTransform(scaleX: CGFloat(scale), scaleY: CGFloat(scale), opacity: alpha)
+
+        case .kwRoloCassino:
+            let t = charEntranceProgress(elapsed: elapsed, charIndex: charIndex, duration: dur, delayStep: 0.05)
+            if t >= 1.0 { return .identity }
+            let spinning = t > 0.01 && t < 0.85
+            let dy: Double = spinning
+                ? ((t * 24.0).truncatingRemainder(dividingBy: 1.0) - 0.5) * 16.0
+                : sin(((t - 0.85) / 0.15) * .pi) * 6.0
+            return MorphGlyphTransform(
+                dy: CGFloat(dy),
+                opacity: t > 0.01 ? 1.0 : 0.0,
+                blur: spinning ? 1.6 : 0.0
+            )
+
+        case .kwPenduloNewton:
+            let t = wholeEntranceProgress(elapsed: elapsed, duration: dur)
+            if t >= 1.0 { return .identity }
+            let offsetX: Double
+            if charIndex == 0 {
+                let swing = MorphEasing.easeInCubic(min(1.0, t / 0.35))
+                offsetX = -46.0 * (1.0 - swing)
+            } else if charIndex == n - 1 {
+                let kick = t > 0.55 ? sin(min(1.0, (t - 0.55) / 0.45) * .pi) : 0.0
+                offsetX = kick * 30.0
+            } else {
+                let wavePos = 0.35 + (Double(charIndex) / Double(max(1, n - 1))) * 0.22
+                let pulse = max(0.0, 1.0 - abs(t - wavePos) / 0.08)
+                offsetX = pulse * 6.0
+            }
+            return MorphGlyphTransform(
+                dx: CGFloat(offsetX),
+                rotationDeg: offsetX * 0.24,
+                opacity: min(1.0, t * 4.0),
+                anchor: .top
+            )
+
+        case .kwBolhasSabao:
+            let raw = charEntranceProgress(elapsed: elapsed, charIndex: charIndex, duration: dur, delayStep: 0.05)
+            if raw >= 1.0 { return .identity }
+            let p = MorphEasing.smoothstep(raw)
+            let inBubble = raw > 0.02 && raw < 0.78
+            let scale = inBubble
+                ? (0.45 + 0.40 * p)
+                : (1.0 + sin(min(1.0, (raw - 0.78) / 0.22) * .pi) * 0.20)
+            return MorphGlyphTransform(
+                dx: CGFloat(sin(raw * 6.0 + Double(charIndex)) * 7.0 * (1.0 - p)),
+                dy: CGFloat(38.0 * (1.0 - p)),
+                scaleX: CGFloat(scale),
+                scaleY: CGFloat(scale),
+                opacity: min(1.0, raw * 3.0)
+            )
+
         default:
             return .identity
         }
@@ -831,6 +936,65 @@ enum MorphGlyphTransformEngine {
         case .fluidLuzPiscina:
             let phase = (time / 2.8) * 2.0 * .pi + Double(charIndex) * 0.5
             return MorphGlyphTransform(dy: CGFloat(sin(phase) * 5.5 * intensity))
+
+        case .kwRespiracaoOrganica:
+            // Zero reflow: simula abertura respirante com scaleX/scaleY em vez de animar tracking no layout.
+            let phase = (time / 3.2) * 2.0 * .pi
+            let breath = 0.5 - 0.5 * cos(phase)
+            return MorphGlyphTransform(
+                scaleX: CGFloat(0.94 + 0.14 * breath),
+                scaleY: CGFloat(0.94 + 0.10 * breath),
+                opacity: 0.72 + 0.28 * breath
+            )
+
+        case .kwLetreiroNeon:
+            let tick = Int(time * 18.0)
+            let isFaulty = (charIndex % 4 == 1) || (charIndex == n - 1)
+            let noise = Double(MorphDeterministicHash.mix(tick, charIndex, 305) & 0xFFFF) / 65535.0
+            let dip = isFaulty && noise > 0.72
+            return MorphGlyphTransform(
+                opacity: dip ? 0.55 : 1.0,
+                glowRadius: dip ? 1.5 : 11.0,
+                glowOpacity: dip ? 0.08 : 0.92
+            )
+
+        case .kwArcoFlexivel:
+            let phase = (time / 3.0) * 2.0 * .pi
+            let bend = sin(phase)
+            return MorphGlyphTransform(
+                dy: CGFloat((norm * norm - 0.5) * 28.0 * bend),
+                rotationDeg: norm * 20.0 * bend
+            )
+
+        case .kwStopMotion6fps:
+            let stepTick = Int(time * 6.0)
+            let u1 = Double(MorphDeterministicHash.mix(stepTick, charIndex, 735) & 0xFFFF) / 65535.0
+            let u2 = Double(MorphDeterministicHash.mix(stepTick, charIndex, 736) & 0xFFFF) / 65535.0
+            return MorphGlyphTransform(
+                dx: CGFloat((u1 - 0.5) * 6.0),
+                dy: CGFloat((u2 - 0.5) * 6.0)
+            )
+
+        case .kwCaosImprevisivel:
+            let tick = Int(time * 5.0)
+            let u1 = Double(MorphDeterministicHash.mix(tick, charIndex, 870) & 0xFFFF) / 65535.0
+            let u2 = Double(MorphDeterministicHash.mix(tick, charIndex, 871) & 0xFFFF) / 65535.0
+            let u3 = Double(MorphDeterministicHash.mix(tick, charIndex, 872) & 0xFFFF) / 65535.0
+            let u4 = Double(MorphDeterministicHash.mix(tick, charIndex, 873) & 0xFFFF) / 65535.0
+            return MorphGlyphTransform(
+                dy: CGFloat((u4 - 0.5) * 18.0),
+                scaleX: CGFloat(0.72 + u1 * 0.56),
+                scaleY: CGFloat(0.72 + u2 * 0.68),
+                skewXDeg: (u3 - 0.5) * 34.0
+            )
+
+        case .kwTontura:
+            let phase = (time / 2.6) * 2.0 * .pi
+            return MorphGlyphTransform(
+                rotationDeg: sin(phase) * 5.0,
+                skewXDeg: sin(phase) * 18.0,
+                skewYDeg: cos(phase) * 10.0
+            )
 
         default:
             return .identity

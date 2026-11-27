@@ -191,6 +191,25 @@ enum MorphEffectID: String, CaseIterable, Identifiable, Hashable, Sendable {
     case valAnaglifo3D
     case valCartasCMYOrbita
 
+    // Gatilhos Dedicados por Palavra-Chave (17 novos; Fluido Viscoso reutiliza .fluidFluidoViscoso)
+    case kwHeartbeatBurst
+    case kwRespiracaoOrganica
+    case kwLetreiroNeon
+    case kwSombraOrbitante
+    case kwArcoCurvado
+    case kwEscadaDiagonal
+    case kwTarjaCensurada
+    case kwRoloCassino
+    case kwPenduloNewton
+    case kwBolhasSabao
+    case kwArcoFlexivel
+    case kwEstouroPopArt
+    case kwTracoParaTinta
+    case kwStopMotion6fps
+    case kwLinhaDesconstruida
+    case kwCaosImprevisivel
+    case kwTontura
+
     var id: String { rawValue }
 }
 
@@ -211,6 +230,8 @@ struct MorphEffectSpec: Identifiable, Equatable, Sendable {
     /// Indica efeitos de movimento contínuo que trazem paleta própria quando o Canal Cor está livre
     /// (mas herdam a cor vencedora se outro parâmetro vencer o Canal Cor).
     let coupledSurfaceColor: Bool
+    /// Efeito disparado exclusivamente por palavra-chave (não entra no sorteio genérico de parâmetros).
+    let isKeywordOnly: Bool
     /// Palavras-chave/radicais normalizados (minúsculos sem acento) para afinidade lexical (Peça A).
     let lexicalKeywords: [String]
 
@@ -227,6 +248,7 @@ struct MorphEffectSpec: Identifiable, Equatable, Sendable {
         isHeavyGPU: Bool = false,
         blockedOnDecorativeFont: Bool = false,
         coupledSurfaceColor: Bool = false,
+        isKeywordOnly: Bool = false,
         lexicalKeywords: [String] = []
     ) {
         self.id = id
@@ -241,6 +263,7 @@ struct MorphEffectSpec: Identifiable, Equatable, Sendable {
         self.isHeavyGPU = isHeavyGPU
         self.blockedOnDecorativeFont = blockedOnDecorativeFont
         self.coupledSurfaceColor = coupledSurfaceColor
+        self.isKeywordOnly = isKeywordOnly
         self.lexicalKeywords = lexicalKeywords
     }
 
@@ -510,7 +533,26 @@ enum MorphEffectCatalog {
               lexicalKeywords: ["medo", "angust", "dor", "perda"]),
         .init(id: .valCartasCMYOrbita, name: "Cartas CMY em Órbita", sourceBadge: "C167", parameter: .valencia, polarity: .negative, channel: .overlay, primitive: .wordLayer,
               minAbsScore: 2,
-              lexicalKeywords: ["repuls", "noj", "pessim", "mal"])
+              lexicalKeywords: ["repuls", "noj", "pessim", "mal"]),
+
+        // MARK: Gatilhos Dedicados por Palavra-Chave (17 exclusivos; Fluido Viscoso reutiliza .fluidFluidoViscoso)
+        .init(id: .kwHeartbeatBurst, name: "Heartbeat Burst", sourceBadge: "79", parameter: .ativacao, polarity: .positive, channel: .entrance, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwRespiracaoOrganica, name: "Respiração Orgânica", sourceBadge: "C37", parameter: .fluidez, polarity: .positive, channel: .continuous, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwLetreiroNeon, name: "Letreiro Neon", sourceBadge: "C40", parameter: .luz, polarity: .positive, channel: .continuous, primitive: .glyphTransform, coupledSurfaceColor: true, isKeywordOnly: true),
+        .init(id: .kwSombraOrbitante, name: "Sombra Orbitante", sourceBadge: "C52", parameter: .luz, polarity: .negative, channel: .overlay, primitive: .wordLayer, isKeywordOnly: true),
+        .init(id: .kwArcoCurvado, name: "Arco Curvado", sourceBadge: "C74", parameter: .abertura, polarity: .both, channel: .typography, primitive: .glyphTransform, isStatic: true, isKeywordOnly: true),
+        .init(id: .kwEscadaDiagonal, name: "Escada Diagonal", sourceBadge: "C75", parameter: .abertura, polarity: .both, channel: .typography, primitive: .glyphTransform, isStatic: true, isKeywordOnly: true),
+        .init(id: .kwTarjaCensurada, name: "Tarja Censurada", sourceBadge: "C82", parameter: .volume, polarity: .both, channel: .overlay, primitive: .wordLayer, isStatic: true, isKeywordOnly: true),
+        .init(id: .kwRoloCassino, name: "Rolo de Cassino", sourceBadge: "C106", parameter: .ativacao, polarity: .positive, channel: .entrance, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwPenduloNewton, name: "Pêndulo de Newton", sourceBadge: "C108", parameter: .andamento, polarity: .both, channel: .entrance, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwBolhasSabao, name: "Bolhas de Sabão", sourceBadge: "C117", parameter: .fluidez, polarity: .positive, channel: .entrance, primitive: .wordLayer, isKeywordOnly: true),
+        .init(id: .kwArcoFlexivel, name: "Arco Flexível", sourceBadge: "C165", parameter: .fluidez, polarity: .positive, channel: .continuous, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwEstouroPopArt, name: "Estouro Pop-Art", sourceBadge: "C176", parameter: .tom, polarity: .positive, channel: .overlay, primitive: .wordLayer, isStatic: true, isKeywordOnly: true),
+        .init(id: .kwTracoParaTinta, name: "Traço para Tinta", sourceBadge: "C228", parameter: .fluidez, polarity: .positive, channel: .entrance, primitive: .wordLayer, isKeywordOnly: true),
+        .init(id: .kwStopMotion6fps, name: "Stop-Motion 6fps", sourceBadge: "C258", parameter: .andamento, polarity: .both, channel: .continuous, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwLinhaDesconstruida, name: "Filtro Linha Desconstruída", sourceBadge: "C299", parameter: .fragmentacao, polarity: .positive, channel: .typography, primitive: .glyphTransform, isStatic: true, isKeywordOnly: true),
+        .init(id: .kwCaosImprevisivel, name: "Caos Imprevisível", sourceBadge: "C362", parameter: .fragmentacao, polarity: .positive, channel: .continuous, primitive: .glyphTransform, isKeywordOnly: true),
+        .init(id: .kwTontura, name: "Tontura", sourceBadge: "C370", parameter: .valencia, polarity: .both, channel: .continuous, primitive: .glyphTransform, isKeywordOnly: true)
     ]
 
     static let byID: [MorphEffectID: MorphEffectSpec] = Dictionary(
@@ -518,7 +560,7 @@ enum MorphEffectCatalog {
     )
 
     static let byParameter: [MorphParameter: [MorphEffectSpec]] = Dictionary(
-        grouping: allSpecs,
+        grouping: allSpecs.filter { !$0.isKeywordOnly },
         by: \.parameter
     )
 
@@ -534,6 +576,7 @@ enum MorphEffectCatalog {
         guard score != 0 else { return [] }
         let absScore = abs(score)
         return (byParameter[parameter] ?? []).filter { spec in
+            guard !spec.isKeywordOnly else { return false }
             guard spec.polarity.matches(score: score) else { return false }
             guard absScore >= spec.minAbsScore else { return false }
             if isDecorativeFont {
@@ -546,8 +589,9 @@ enum MorphEffectCatalog {
     }
 
     static func runSelfCheck() {
-        assert(MorphEffectID.allCases.count == 97, "Esperados 97 IDs no catálogo, encontrados \(MorphEffectID.allCases.count)")
-        assert(allSpecs.count == 97, "Esperadas 97 specs no catálogo, encontradas \(allSpecs.count)")
+        assert(MorphEffectID.allCases.count == 114, "Esperados 114 IDs no catálogo (97 + 17 gatilhos), encontrados \(MorphEffectID.allCases.count)")
+        assert(allSpecs.count == 114, "Esperadas 114 specs no catálogo, encontradas \(allSpecs.count)")
+        assert(allSpecs.filter { !$0.isKeywordOnly }.count == 97, "Pool de parâmetros deve manter exatamente 97 specs")
         assert(byID.count == allSpecs.count, "IDs duplicados no MorphEffectCatalog")
 
         for param in MorphParameter.allCases {
@@ -569,5 +613,187 @@ enum MorphEffectCatalog {
         assert(spec(for: .fluidDerretido).coupledSurfaceColor == false)
         assert(spec(for: .andLetargia).parameter == .andamento && spec(for: .andLetargia).polarity == .negative)
         assert(spec(for: .valFluxoArcoIris).minAbsScore >= 2 && spec(for: .valAberracaoCromatica).minAbsScore >= 2)
+        MorphWordTriggerCatalog.runSelfCheck()
+    }
+}
+
+// MARK: - Tabela de Gatilhos Fixos por Palavra-Chave (18 Regras)
+
+struct MorphWordTriggerRule: Sendable {
+    let effectID: MorphEffectID
+    let exactWords: Set<String>
+    let phrases: [[String]]
+
+    init(effectID: MorphEffectID, exactWords: Set<String>, phrases: [[String]] = []) {
+        self.effectID = effectID
+        self.exactWords = exactWords
+        self.phrases = phrases
+    }
+}
+
+enum MorphWordTriggerCatalog {
+    static let rules: [MorphWordTriggerRule] = [
+        .init(
+            effectID: .kwHeartbeatBurst,
+            exactWords: ["coracao", "coracoes", "coracaozinho", "batimento", "batimentos", "cardiaco", "cardiaca", "heartbeat"]
+        ),
+        .init(
+            effectID: .kwRespiracaoOrganica,
+            exactWords: ["respiracao", "respirar", "respiro", "respira", "respirando", "respirou", "suspiro", "suspirar", "suspirando", "ofegante", "arfar", "inspirar", "expirar"]
+        ),
+        .init(
+            effectID: .kwLetreiroNeon,
+            exactWords: ["neon", "neons", "letreiro", "luminoso"]
+        ),
+        .init(
+            effectID: .kwSombraOrbitante,
+            exactWords: ["sombra", "sombras", "sombrio", "sombria", "penumbra", "sombreado"]
+        ),
+        .init(
+            effectID: .kwArcoCurvado,
+            exactWords: ["arco", "arcos", "curva", "curvado", "curvada", "curvo", "arcada", "abobada"]
+        ),
+        .init(
+            effectID: .kwEscadaDiagonal,
+            exactWords: ["escada", "escadas", "escadaria", "escadinha", "degrau", "degraus", "subida", "subidas", "subir", "subindo", "subiu", "escalar", "escalada"]
+        ),
+        .init(
+            effectID: .kwTarjaCensurada,
+            exactWords: [
+                "palavrao", "palavroes", "porra", "caralho", "carai", "krl", "crl",
+                "merda", "bosta", "puta", "putaria", "pqp", "foda", "foder", "fodeu",
+                "fodendo", "fodido", "fodida", "fudido", "fudida", "fudendo", "fodase",
+                "cacete", "cacetada", "buceta", "cu", "cuzao", "arrombado", "arrombada",
+                "fdp", "vsf", "vtnc", "desgracado", "desgracada", "escroto", "escrota",
+                "cagada", "cagado", "cagando"
+            ],
+            phrases: [["foda", "se"]]
+        ),
+        .init(
+            effectID: .kwRoloCassino,
+            exactWords: ["aleatorio", "aleatoria", "aleatorios", "aleatorias", "cassino", "cassinos", "casino", "roleta", "aposta", "apostas", "apostar", "sorteio", "sortear", "dado", "dados", "azar", "jackpot", "loteria", "bingo"]
+        ),
+        .init(
+            effectID: .kwPenduloNewton,
+            exactWords: ["pendulo", "pendulos", "newton", "balanco", "balancar", "oscilar", "oscilacao"]
+        ),
+        .init(
+            effectID: .kwBolhasSabao,
+            exactWords: ["sabao", "sabonete", "sabonetes", "limpeza", "limpo", "limpa", "limpar", "limpando", "bolha", "bolhas", "espuma", "espumar", "detergente", "lavar", "lavando", "banho", "ensaboar", "ensaboado"]
+        ),
+        .init(
+            effectID: .kwArcoFlexivel,
+            exactWords: ["dobrar", "dobra", "dobro", "dobrou", "dobrando", "dobrado", "dobrada", "flexivel", "flexao", "entortar", "entortando", "envergar", "vergar"]
+        ),
+        .init(
+            effectID: .kwEstouroPopArt,
+            exactWords: ["quadrinho", "quadrinhos", "hq", "hqs", "gibi", "gibis", "tirinha", "tirinhas", "popart", "cartoon", "comics", "comic", "onomatopeia", "pow", "bam", "kaboom", "boom"],
+            phrases: [["pop", "art"]]
+        ),
+        .init(
+            effectID: .kwTracoParaTinta,
+            exactWords: ["pintar", "pinta", "pintando", "pintou", "pintado", "pintada", "pintura", "pintor", "pintora", "tinta", "tintas", "pincel", "pincelada", "colorir", "desenhar", "desenho", "rabiscar", "esboco"]
+        ),
+        .init(
+            effectID: .kwStopMotion6fps,
+            exactWords: ["coraline", "stopmotion", "claymation", "massinha"],
+            phrases: [["stop", "motion"]]
+        ),
+        .init(
+            effectID: .kwLinhaDesconstruida,
+            exactWords: ["bagunca", "baguncado", "baguncada", "baguncar", "baguncando", "bagunceiro", "bagunceira", "desordem", "desordenado", "desorganizado", "desorganizada", "desarrumado", "desarrumada", "baderna", "confusao", "entulho"]
+        ),
+        .init(
+            effectID: .fluidFluidoViscoso,
+            exactWords: ["escorrimento", "escorrer", "escorre", "escorrendo", "escorreu", "escorrido", "viscoso", "viscosa", "pegajoso", "pegajosa", "gosma", "gosmento", "meleca", "grudento", "grudenta", "xarope", "mel"]
+        ),
+        .init(
+            effectID: .kwCaosImprevisivel,
+            exactWords: ["caos", "caotico", "caotica", "caoticos", "caoticas", "imprevisivel", "imprevisiveis", "anarquia", "descontrole", "descontrolado", "tumulto", "balburdia"]
+        ),
+        .init(
+            effectID: .kwTontura,
+            exactWords: ["tontura", "tonturas", "tonto", "tonta", "tontos", "tontas", "zonzo", "zonza", "vertigem", "bebida", "bebidas", "bebado", "bebada", "bebados", "bebadas", "beber", "bebendo", "bebeu", "embriagado", "embriagada", "alcool", "cerveja", "vinho", "cachaca", "drinque", "drink", "ressaca", "grogue", "cambaleando", "cambalear"]
+        )
+    ]
+
+    private static let exactWordIndex: [String: MorphEffectID] = {
+        var map: [String: MorphEffectID] = [:]
+        for rule in rules {
+            for w in rule.exactWords {
+                map[w] = rule.effectID
+            }
+        }
+        return map
+    }()
+
+    private static let phraseEntries: [(tokens: [String], effectID: MorphEffectID)] = rules.flatMap { rule in
+        rule.phrases.map { ($0, rule.effectID) }
+    }
+
+    static func normalizedSubTokens(_ word: String) -> [String] {
+        let folded = word.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "pt_BR"))
+        return folded
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    static func matchSingleWord(_ word: String) -> MorphEffectID? {
+        let subs = normalizedSubTokens(word)
+        guard !subs.isEmpty else { return nil }
+        if subs.count == 1 {
+            return exactWordIndex[subs[0]]
+        }
+        // Palavras compostas com hífen (ex.: "pop-art", "stop-motion", "foda-se") casam apenas via `phrases`,
+        // evitando falsos positivos como "arco-íris" disparar "arco".
+        for entry in phraseEntries where entry.tokens == subs {
+            return entry.effectID
+        }
+        return nil
+    }
+
+    static func matchPhrase(tokens: [String]) -> [Int: MorphEffectID] {
+        let subsPerWord = tokens.map { normalizedSubTokens($0) }
+        var matches: [Int: MorphEffectID] = [:]
+
+        // 1. Termos compostos entre palavras adjacentes (ex.: "Pop Art", "Stop Motion")
+        for i in tokens.indices {
+            for entry in phraseEntries where entry.tokens.count >= 2 {
+                let len = entry.tokens.count
+                guard i + len <= tokens.count else { continue }
+                let allMatch = (0..<len).allSatisfy { k in
+                    subsPerWord[i + k].count == 1 && subsPerWord[i + k][0] == entry.tokens[k]
+                }
+                if allMatch {
+                    for k in 0..<len {
+                        matches[i + k] = entry.effectID
+                    }
+                }
+            }
+        }
+
+        // 2. Palavra única (ou composta por hífen) nos índices ainda livres
+        for i in tokens.indices where matches[i] == nil {
+            if let hit = matchSingleWord(tokens[i]) {
+                matches[i] = hit
+            }
+        }
+
+        return matches
+    }
+
+    static func runSelfCheck() {
+        assert(rules.count == 18, "Esperadas 18 regras de gatilho por palavra")
+        var seen: Set<String> = []
+        for rule in rules {
+            _ = MorphEffectCatalog.spec(for: rule.effectID)
+            for w in rule.exactWords {
+                assert(seen.insert(w).inserted, "Palavra duplicada nos gatilhos: \(w)")
+            }
+        }
+        assert(matchSingleWord("arco-íris") == nil, "'arco-íris' não deve disparar Arco Curvado")
+        assert(matchSingleWord("Pop-Art!") == .kwEstouroPopArt)
+        assert(matchPhrase(tokens: ["estilo", "Stop", "Motion", "lindo"]) == [1: .kwStopMotion6fps, 2: .kwStopMotion6fps])
     }
 }

@@ -88,15 +88,19 @@ struct MorphUnifiedWordView: View {
         elapsedTime * plan.speedMultiplier
     }
 
+    private var displayWord: String {
+        plan.overlay?.effectID == .kwEstouroPopArt ? plan.word.uppercased() : plan.word
+    }
+
     private var characters: [Character] {
-        Array(plan.word)
+        Array(displayWord)
     }
 
     private var isEntranceActive: Bool {
         plan.entrance != nil && elapsedTime < plan.entranceTotalDuration
     }
 
-    /// Espaçamento estático entre letras com teto proporcional à largura da TV (zero reflow).
+    /// Espaçamento estático entre letras com teto proporcional à largura da TV e ao tamanho da fonte (zero reflow/encavalamento).
     private var safeLetterSpacing: CGFloat {
         guard plan.staticStructure?.effectID == .abertEspacamentoLetras else {
             return 0
@@ -104,8 +108,8 @@ struct MorphUnifiedWordView: View {
         let abertura = plan.scores[.abertura]
         guard abertura != 0 else { return 0 }
         if abertura < 0 {
-            let compressed: [Int: CGFloat] = [-5: -3.2, -4: -2.6, -3: -2.0, -2: -1.3, -1: -0.6]
-            return compressed[abertura] ?? 0
+            let maxCompression = min(2.2, plan.typography.fontSize * 0.055)
+            return CGFloat(abertura) / 5.0 * maxCompression
         }
         let desired: [Int: CGFloat] = [1: 2.5, 2: 5.0, 3: 7.5, 4: 10.0, 5: 12.5]
         let target = desired[abertura] ?? 0
@@ -113,6 +117,22 @@ struct MorphUnifiedWordView: View {
         let estimatedBaseWidth = CGFloat(characters.count) * plan.typography.fontSize * 0.62
         let maxExtraTotal = max(0, (maxAvailableWidth * 0.86) - estimatedBaseWidth)
         return min(target, maxExtraTotal / gaps)
+    }
+
+    /// Reduz proporcionalmente palavras muito longas (ex.: 12+ letras com Domínio alto)
+    /// para caberem inteiras na largura útil da TV CRT sem cortar nem invadir vizinhas.
+    private var wordFitScale: CGFloat {
+        let chars = CGFloat(max(1, displayWord.count))
+        let charFactor: CGFloat = plan.typography.familyName == "SF Padrão" ? 0.63 : 0.58
+        let spacingExtra = max(0, safeLetterSpacing) * max(0, chars - 1)
+        let estContentW = chars * plan.typography.fontSize * charFactor + spacingExtra
+        let extraW = plan.horizontalVisualOverhang * 2
+            + (plan.overlay?.effectID == .kwEstouroPopArt ? 24 : 0)
+            + 8
+        let totalEstW = estContentW + extraW
+        let limit = max(120, maxAvailableWidth * 0.96)
+        guard totalEstW > limit else { return 1.0 }
+        return max(0.55, limit / totalEstW)
     }
 
     private var baseTint: Color {
@@ -133,161 +153,74 @@ struct MorphUnifiedWordView: View {
     }
 
     var body: some View {
-        let padH: CGFloat = showWordSelectionHighlight ? 6 : 2
-        let padV: CGFloat = showWordSelectionHighlight ? 4 : 2
+        let hOverhang = plan.horizontalVisualOverhang
+        let vOverhang = plan.verticalVisualOverhang
+        let padH: CGFloat = (showWordSelectionHighlight ? 6 : 3) + hOverhang
+        let padTop: CGFloat = (showWordSelectionHighlight ? 4 : 2) + vOverhang.top
+        let padBottom: CGFloat = (showWordSelectionHighlight ? 4 : 2) + vOverhang.bottom
+        let fitScale = wordFitScale
 
-        Group {
-            if isPurePlainWord {
-                let style = MorphSurfaceResolver.foregroundStyle(
-                    plan: plan,
-                    elapsed: 0,
-                    effectiveTime: 0,
-                    charIndex: 0,
-                    totalChars: 1,
-                    onWhiteCanvas: onWhiteCanvas
-                )
-                glyphText(plan.word, typography: plan.typography, style: style, tracking: 0)
-            } else {
-                wordWithLayersAndGPU
-            }
-        }
-        .opacity(plan.typography.whisperOpacityMultiplier)
-        .padding(.horizontal, padH)
-        .padding(.vertical, padV)
-        .background {
-            if isSelectedInWordMode {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.cyan.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.cyan.opacity(0.08))
+        MorphScaledLayout(scale: fitScale) {
+            Group {
+                if isPurePlainWord {
+                    let style = MorphSurfaceResolver.foregroundStyle(
+                        plan: plan,
+                        elapsed: 0,
+                        effectiveTime: 0,
+                        charIndex: 0,
+                        totalChars: 1,
+                        onWhiteCanvas: onWhiteCanvas
                     )
+                    MorphGlyphTextView(text: plan.word, typography: plan.typography, style: style, tracking: 0)
+                } else {
+                    wordWithLayersAndGPU
+                }
             }
+            .opacity(plan.typography.whisperOpacityMultiplier)
+            .padding(.leading, padH)
+            .padding(.trailing, padH)
+            .padding(.top, padTop)
+            .padding(.bottom, padBottom)
+            .background {
+                if isSelectedInWordMode {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.cyan.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.cyan.opacity(0.08))
+                        )
+                }
+            }
+            .scaleEffect(fitScale, anchor: .center)
         }
     }
 
-    // MARK: - Conteúdo da Palavra (Fast-Path em Text Único ou Caractere a Caractere)
+    // MARK: - Conteúdo da Palavra (Structs Nominais para Evitar Explosão de Tipos Opacos no Swift)
 
-    @ViewBuilder
-    private func styledCharactersRow(overrideColor: Color? = nil, forceVisible: Bool = false) -> some View {
-        let typography = plan.typography
-        let needsPerChar = plan.needsPerCharLayout(entranceActive: isEntranceActive)
-
-        if !needsPerChar {
-            // Fast-path: 1 único Text para toda a palavra (em vez de N letras x 12 modifiers).
-            let tf = MorphGlyphTransformEngine.evaluate(
-                plan: plan,
-                charIndex: 0,
-                totalChars: 1,
-                elapsed: elapsedTime
-            )
-            let style: AnyShapeStyle = overrideColor.map(AnyShapeStyle.init) ?? MorphSurfaceResolver.foregroundStyle(
-                plan: plan,
-                elapsed: elapsedTime,
-                effectiveTime: effectiveTime,
-                charIndex: 0,
-                totalChars: 1,
-                onWhiteCanvas: onWhiteCanvas
-            )
-            glyphText(plan.word, typography: typography, style: style, tracking: safeLetterSpacing)
-                .modifier(
-                    MorphCapabilityTransformModifier(
-                        tf: tf,
-                        plan: plan,
-                        glowColor: glowTintColor,
-                        allowGlow: overrideColor == nil,
-                        forceVisible: forceVisible
-                    )
-                )
-        } else {
-            let chars = characters
-            let hasRocket = (plan.entrance?.effectID == .calLancamentoFoguete) && isEntranceActive
-            let rocketDur = MorphGlyphTransformEngine.entranceDuration(for: .calLancamentoFoguete)
-
-            HStack(spacing: safeLetterSpacing) {
-                ForEach(Array(chars.enumerated()), id: \.offset) { charIdx, ch in
-                    let tf = MorphGlyphTransformEngine.evaluate(
-                        plan: plan,
-                        charIndex: charIdx,
-                        totalChars: chars.count,
-                        elapsed: elapsedTime
-                    )
-                    let style: AnyShapeStyle = overrideColor.map(AnyShapeStyle.init) ?? MorphSurfaceResolver.foregroundStyle(
-                        plan: plan,
-                        elapsed: elapsedTime,
-                        effectiveTime: effectiveTime,
-                        charIndex: charIdx,
-                        totalChars: chars.count,
-                        onWhiteCanvas: onWhiteCanvas
-                    )
-                    let str = String(ch)
-
-                    ZStack {
-                        if hasRocket && overrideColor == nil {
-                            let raw = MorphGlyphTransformEngine.charEntranceProgress(
-                                elapsed: elapsedTime,
-                                charIndex: charIdx,
-                                duration: rocketDur,
-                                delayStep: 0.045
-                            )
-                            let trail = (raw > 0.02 && raw < 0.85) ? (1.0 - raw) : 0.0
-                            if trail > 0.02 {
-                                Capsule()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [MorphCRTSafePalette.darkAmber, MorphCRTSafePalette.burntOrange, .clear],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .frame(width: 5, height: CGFloat(trail * 38))
-                                    .offset(y: tf.dy + CGFloat(trail * 20))
-                                    .blur(radius: 1.5)
-                            }
-                        }
-
-                        glyphText(str, typography: typography, style: style, tracking: 0)
-                            .modifier(
-                                MorphCapabilityTransformModifier(
-                                    tf: tf,
-                                    plan: plan,
-                                    glowColor: glowTintColor,
-                                    allowGlow: overrideColor == nil,
-                                    forceVisible: forceVisible
-                                )
-                            )
-                    }
-                }
-            }
-        }
+    private func styledCharactersRow(overrideColor: Color? = nil, forceVisible: Bool = false) -> MorphStyledCharactersRowView {
+        MorphStyledCharactersRowView(
+            plan: plan,
+            displayWord: displayWord,
+            elapsedTime: elapsedTime,
+            effectiveTime: effectiveTime,
+            isEntranceActive: isEntranceActive,
+            safeLetterSpacing: safeLetterSpacing,
+            glowTintColor: glowTintColor,
+            onWhiteCanvas: onWhiteCanvas,
+            overrideColor: overrideColor,
+            forceVisible: forceVisible
+        )
     }
 
     /// Cópia leve para camadas traseiras de eco/sombra/aberração: usa 1 Text quando não há distorção por caractere.
-    @ViewBuilder
-    private func lightweightGhostWord(color: Color, forceVisible: Bool = true) -> some View {
+    private func lightweightGhostWord(color: Color, forceVisible: Bool = true) -> MorphStyledCharactersRowView {
         styledCharactersRow(overrideColor: color, forceVisible: forceVisible)
     }
 
-    @ViewBuilder
-    private func glyphText(_ str: String, typography: ResolvedTypography, style: AnyShapeStyle, tracking: CGFloat) -> some View {
-        if typography.extraStrokeWidth > 0 && !typography.isDecorativeSingleWeight {
-            let d = typography.extraStrokeWidth
-            ZStack {
-                Text(str).font(typography.font).tracking(tracking).foregroundStyle(style).offset(x: d, y: 0)
-                Text(str).font(typography.font).tracking(tracking).foregroundStyle(style).offset(x: -d, y: 0)
-                Text(str).font(typography.font).tracking(tracking).foregroundStyle(style).offset(x: 0, y: d * 0.7)
-                Text(str).font(typography.font).tracking(tracking).foregroundStyle(style).offset(x: 0, y: -d * 0.7)
-                Text(str).font(typography.font).tracking(tracking).foregroundStyle(style)
-            }
-        } else {
-            Text(str)
-                .font(typography.font)
-                .tracking(tracking)
-                .foregroundStyle(style)
-        }
-    }
-
     private var glowTintColor: Color {
+        if plan.continuous?.effectID == .kwLetreiroNeon {
+            return MorphCRTSafePalette.deepPink
+        }
         if plan.entrance?.effectID == .calChamaAscendente || plan.continuous?.effectID == .calFogoVivo {
             return MorphCRTSafePalette.burntOrange
         }
@@ -390,6 +323,27 @@ struct MorphUnifiedWordView: View {
                 styledCharactersRow()
                     .clipShape(MorphSplitHalfClip(isTop: false))
                     .offset(x: 10.0 * rem, y: 7.0 * rem)
+            }
+        } else if plan.entrance?.effectID == .kwTracoParaTinta && isEntranceActive {
+            let dur = MorphGlyphTransformEngine.entranceDuration(for: .kwTracoParaTinta)
+            let t = MorphGlyphTransformEngine.wholeEntranceProgress(elapsed: elapsedTime, duration: dur)
+            let strokeAlpha = min(1.0, t * 2.8)
+            let fillProgress = MorphEasing.smoothstep(min(1.0, max(0.0, (t - 0.32) / 0.68)))
+            let strokeW: CGFloat = 1.2
+            ZStack {
+                ZStack {
+                    lightweightGhostWord(color: baseTint, forceVisible: true).offset(x: strokeW, y: 0)
+                    lightweightGhostWord(color: baseTint, forceVisible: true).offset(x: -strokeW, y: 0)
+                    lightweightGhostWord(color: baseTint, forceVisible: true).offset(x: 0, y: strokeW)
+                    lightweightGhostWord(color: baseTint, forceVisible: true).offset(x: 0, y: -strokeW)
+                    lightweightGhostWord(color: .black, forceVisible: true)
+                        .blendMode(.destinationOut)
+                }
+                .compositingGroup()
+                .opacity(strokeAlpha * (1.0 - fillProgress * 0.85))
+
+                styledCharactersRow()
+                    .clipShape(MorphBottomUpFillClip(progress: fillProgress))
             }
         } else {
             styledCharactersRow()
@@ -639,6 +593,46 @@ struct MorphUnifiedWordView: View {
                 }
                 .compositingGroup()
 
+        case .kwSombraOrbitante:
+            let phase = (effectiveTime / 3.2) * 2.0 * .pi
+            base.shadow(
+                color: Color.black.opacity(0.42),
+                radius: 3.5,
+                x: CGFloat(cos(phase) * 10.0),
+                y: CGFloat(sin(phase) * 10.0)
+            )
+
+        case .kwTarjaCensurada:
+            let tilt: Double = plan.wordIndex.isMultiple(of: 2) ? -1.4 : 1.4
+            base
+                .padding(.horizontal, 4)
+                .overlay {
+                    Rectangle()
+                        .fill(MorphCRTSafePalette.defaultInk(onWhiteCanvas: onWhiteCanvas))
+                        .scaleEffect(x: 1.04, y: 0.82)
+                        .rotationEffect(.degrees(tilt))
+                        .allowsHitTesting(false)
+                }
+
+        case .kwEstouroPopArt:
+            let isDeco = plan.typography.isDecorativeSingleWeight
+            base
+                .shadow(color: Color.black.opacity(isDeco ? 0.0 : 0.82), radius: 0, x: 2.5, y: 2.5)
+                .rotationEffect(.degrees(-5.0))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background {
+                    if !isDeco {
+                        MorphStarburstShape(points: 12, spinDeg: 10)
+                            .fill(Color(red: 0.90, green: 0.66, blue: 0.04))
+                            .overlay(
+                                MorphStarburstShape(points: 12, spinDeg: 10)
+                                    .stroke(MorphCRTSafePalette.deepCrimson, lineWidth: 2.4)
+                            )
+                            .allowsHitTesting(false)
+                    }
+                }
+
         default:
             base
         }
@@ -728,6 +722,222 @@ struct MorphUnifiedWordView: View {
         }
 
         return nil
+    }
+}
+
+// MARK: - Subviews Nominais (Mantêm Substituição de Tipos Opacos em O(1) no SwiftUI)
+
+private struct MorphScaledLayout: Layout {
+    let scale: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let first = subviews.first else { return .zero }
+        let raw = first.sizeThatFits(.unspecified)
+        guard scale < 0.999 else { return raw }
+        return CGSize(width: raw.width * scale, height: raw.height * scale)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let first = subviews.first else { return }
+        first.place(
+            at: CGPoint(x: bounds.midX, y: bounds.midY),
+            anchor: .center,
+            proposal: .unspecified
+        )
+    }
+}
+
+private struct MorphGlyphTextView: View {
+    let text: String
+    let typography: ResolvedTypography
+    let style: AnyShapeStyle
+    let tracking: CGFloat
+
+    var body: some View {
+        if typography.extraStrokeWidth > 0 && !typography.isDecorativeSingleWeight {
+            let d = typography.extraStrokeWidth
+            ZStack {
+                Text(text).font(typography.font).tracking(tracking).foregroundStyle(style).fixedSize().offset(x: d, y: 0)
+                Text(text).font(typography.font).tracking(tracking).foregroundStyle(style).fixedSize().offset(x: -d, y: 0)
+                Text(text).font(typography.font).tracking(tracking).foregroundStyle(style).fixedSize().offset(x: 0, y: d * 0.7)
+                Text(text).font(typography.font).tracking(tracking).foregroundStyle(style).fixedSize().offset(x: 0, y: -d * 0.7)
+                Text(text).font(typography.font).tracking(tracking).foregroundStyle(style).fixedSize()
+            }
+        } else {
+            Text(text)
+                .font(typography.font)
+                .tracking(tracking)
+                .foregroundStyle(style)
+                .fixedSize()
+        }
+    }
+}
+
+private struct MorphStyledCharactersRowView: View {
+    private static let slotReelChars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+    let plan: WordAnimationPlan
+    let displayWord: String
+    let elapsedTime: TimeInterval
+    let effectiveTime: Double
+    let isEntranceActive: Bool
+    let safeLetterSpacing: CGFloat
+    let glowTintColor: Color
+    let onWhiteCanvas: Bool
+    var overrideColor: Color? = nil
+    var forceVisible: Bool = false
+
+    var body: some View {
+        let typography = plan.typography
+        let needsPerChar = plan.needsPerCharLayout(entranceActive: isEntranceActive)
+
+        if !needsPerChar {
+            let tf = MorphGlyphTransformEngine.evaluate(
+                plan: plan,
+                charIndex: 0,
+                totalChars: 1,
+                elapsed: elapsedTime
+            )
+            let style: AnyShapeStyle = overrideColor.map(AnyShapeStyle.init) ?? MorphSurfaceResolver.foregroundStyle(
+                plan: plan,
+                elapsed: elapsedTime,
+                effectiveTime: effectiveTime,
+                charIndex: 0,
+                totalChars: 1,
+                onWhiteCanvas: onWhiteCanvas
+            )
+            MorphGlyphTextView(text: displayWord, typography: typography, style: style, tracking: safeLetterSpacing)
+                .modifier(
+                    MorphCapabilityTransformModifier(
+                        tf: tf,
+                        plan: plan,
+                        glowColor: glowTintColor,
+                        allowGlow: overrideColor == nil,
+                        forceVisible: forceVisible
+                    )
+                )
+        } else {
+            let chars = Array(displayWord)
+            let hasRocket = (plan.entrance?.effectID == .calLancamentoFoguete) && isEntranceActive
+            let rocketDur = MorphGlyphTransformEngine.entranceDuration(for: .calLancamentoFoguete)
+            let isSlotReel = (plan.entrance?.effectID == .kwRoloCassino) && isEntranceActive
+            let slotDur = MorphGlyphTransformEngine.entranceDuration(for: .kwRoloCassino)
+            let hasSoapBubbles = (plan.entrance?.effectID == .kwBolhasSabao) && isEntranceActive
+            let bubbleDur = MorphGlyphTransformEngine.entranceDuration(for: .kwBolhasSabao)
+
+            HStack(spacing: safeLetterSpacing) {
+                ForEach(Array(chars.enumerated()), id: \.offset) { charIdx, ch in
+                    let tf = MorphGlyphTransformEngine.evaluate(
+                        plan: plan,
+                        charIndex: charIdx,
+                        totalChars: chars.count,
+                        elapsed: elapsedTime
+                    )
+                    let style: AnyShapeStyle = overrideColor.map(AnyShapeStyle.init) ?? MorphSurfaceResolver.foregroundStyle(
+                        plan: plan,
+                        elapsed: elapsedTime,
+                        effectiveTime: effectiveTime,
+                        charIndex: charIdx,
+                        totalChars: chars.count,
+                        onWhiteCanvas: onWhiteCanvas
+                    )
+                    let realStr = String(ch)
+                    let spinningStr: String? = {
+                        guard isSlotReel else { return nil }
+                        let reelT = MorphGlyphTransformEngine.charEntranceProgress(
+                            elapsed: elapsedTime,
+                            charIndex: charIdx,
+                            duration: slotDur,
+                            delayStep: 0.05
+                        )
+                        guard reelT > 0.01 && reelT < 0.85 else { return nil }
+                        let tick = Int(reelT * 24.0)
+                        let reel = Self.slotReelChars
+                        let pick = Int(MorphDeterministicHash.mix(plan.wordIndex, tick, charIdx) % UInt64(reel.count))
+                        return String(reel[pick])
+                    }()
+
+                    // Molde de largura fixo na letra real (evita pulos no Rolo de Cassino) + decorações em background/overlay (0 impacto no layout).
+                    Group {
+                        if let spinningStr {
+                            MorphGlyphTextView(text: realStr, typography: typography, style: style, tracking: 0)
+                                .hidden()
+                                .overlay {
+                                    MorphGlyphTextView(text: spinningStr, typography: typography, style: style, tracking: 0)
+                                }
+                        } else {
+                            MorphGlyphTextView(text: realStr, typography: typography, style: style, tracking: 0)
+                        }
+                    }
+                    .modifier(
+                        MorphCapabilityTransformModifier(
+                            tf: tf,
+                            plan: plan,
+                            glowColor: glowTintColor,
+                            allowGlow: overrideColor == nil,
+                            forceVisible: forceVisible
+                        )
+                    )
+                    .background {
+                        if hasRocket && overrideColor == nil {
+                            let raw = MorphGlyphTransformEngine.charEntranceProgress(
+                                elapsed: elapsedTime,
+                                charIndex: charIdx,
+                                duration: rocketDur,
+                                delayStep: 0.045
+                            )
+                            let trail = (raw > 0.02 && raw < 0.85) ? (1.0 - raw) : 0.0
+                            if trail > 0.02 {
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [MorphCRTSafePalette.darkAmber, MorphCRTSafePalette.burntOrange, .clear],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(width: 5, height: CGFloat(trail * 38))
+                                    .offset(y: tf.dy + CGFloat(trail * 20))
+                                    .blur(radius: 1.5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                    }
+                    .overlay {
+                        if hasSoapBubbles && overrideColor == nil {
+                            let raw = MorphGlyphTransformEngine.charEntranceProgress(
+                                elapsed: elapsedTime,
+                                charIndex: charIdx,
+                                duration: bubbleDur,
+                                delayStep: 0.05
+                            )
+                            if raw > 0.02 && raw < 0.78 {
+                                let p = MorphEasing.smoothstep(raw)
+                                let bubbleSize = typography.fontSize * (0.85 + 0.45 * p)
+                                Circle()
+                                    .stroke(
+                                        AngularGradient(
+                                            colors: [
+                                                MorphCRTSafePalette.deepCyan,
+                                                MorphCRTSafePalette.deepPink,
+                                                MorphCRTSafePalette.darkAmber,
+                                                MorphCRTSafePalette.oceanBright,
+                                                MorphCRTSafePalette.deepCyan
+                                            ],
+                                            center: .center
+                                        ),
+                                        lineWidth: 1.8
+                                    )
+                                    .frame(width: bubbleSize, height: bubbleSize)
+                                    .offset(x: tf.dx, y: tf.dy)
+                                    .opacity(0.85)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -850,7 +1060,48 @@ struct MorphBandClip: Shape {
     }
 }
 
-// MARK: - Auditoria de Cobertura dos 97 Efeitos (Verificada em Compilação e Execução)
+struct MorphBottomUpFillClip: Shape {
+    let progress: Double
+
+    func path(in rect: CGRect) -> Path {
+        let p = CGFloat(min(max(progress, 0), 1))
+        let h = rect.height * p
+        return Path(CGRect(x: rect.minX, y: rect.maxY - h, width: rect.width, height: h))
+    }
+}
+
+struct MorphStarburstShape: Shape {
+    let points: Int
+    let spinDeg: Double
+
+    func path(in rect: CGRect) -> Path {
+        let count = max(4, points)
+        let cx = rect.midX
+        let cy = rect.midY
+        let outerRX = rect.width * 0.54
+        let outerRY = rect.height * 0.58
+        let innerRX = outerRX * 0.72
+        let innerRY = outerRY * 0.66
+        let baseRad = spinDeg * .pi / 180.0
+
+        var path = Path()
+        for i in 0..<(count * 2) {
+            let angle = baseRad + Double(i) * .pi / Double(count)
+            let rx = i.isMultiple(of: 2) ? outerRX : innerRX
+            let ry = i.isMultiple(of: 2) ? outerRY : innerRY
+            let pt = CGPoint(x: cx + CGFloat(cos(angle)) * rx, y: cy + CGFloat(sin(angle)) * ry)
+            if i == 0 {
+                path.move(to: pt)
+            } else {
+                path.addLine(to: pt)
+            }
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Auditoria de Cobertura dos 114 Efeitos (Verificada em Compilação e Execução)
 
 enum MorphRendererSelfCheck {
     enum RenderRoute {
@@ -883,7 +1134,10 @@ enum MorphRendererSelfCheck {
              .fluidRigidezMecanica, .fluidWaterDrop, .fluidDerretido, .fluidWave,
              .fluidOndaInclinacao, .fluidDancaTipografica, .fluidOndulacaoVertical, .fluidFluidoViscoso,
              .fluidEspelhoLiquido, .fluidSubmarino, .fluidLuzPiscina,
-             .valCascataArcoIris:
+             .valCascataArcoIris,
+             .kwHeartbeatBurst, .kwRespiracaoOrganica, .kwLetreiroNeon, .kwArcoCurvado,
+             .kwEscadaDiagonal, .kwRoloCassino, .kwPenduloNewton, .kwArcoFlexivel,
+             .kwStopMotion6fps, .kwLinhaDesconstruida, .kwCaosImprevisivel, .kwTontura:
             return .glyphTransform
 
         case .fragDespedacar, .fragCisao, .fragCorteAoMeio, .fragRachado,
@@ -894,7 +1148,8 @@ enum MorphRendererSelfCheck {
              .pesoRastroVertical,
              .fluidRefracaoSubmersa,
              .valCaleidoscopioPrismatico, .valImpressaoCMYK, .valSombrasGemeas,
-             .valAberracaoCromatica, .valAnaglifo3D, .valCartasCMYOrbita:
+             .valAberracaoCromatica, .valAnaglifo3D, .valCartasCMYOrbita,
+             .kwSombraOrbitante, .kwTarjaCensurada, .kwBolhasSabao, .kwEstouroPopArt, .kwTracoParaTinta:
             return .wordLayer
 
         case .fluidBrilhoMetalico,
@@ -912,11 +1167,17 @@ enum MorphRendererSelfCheck {
     static func runSelfCheck() {
         WordEffectResolver.runSelfCheck()
 
-        // Garante que palavras neutras não ativam TimelineView nem layout por caractere
+        // Garante que palavras neutras não ativam TimelineView nem layout por caractere nem folga desnecessária
         let plain = WordEffectResolver.resolveWord(word: "casa", wordIndex: 0, scores: ParameterScores(), phraseSeed: 1)
         assert(!plain.hasContinuousTimeAnimation && plain.entrance == nil)
         assert(!plain.needsPerCharLayout(entranceActive: false))
         assert(!plain.usesBlurModifier && !plain.uses3DRotationModifier && !plain.usesSkewModifier && !plain.usesGlowModifier)
+        assert(plain.horizontalVisualOverhang == 0 && plain.verticalVisualOverhang.top == 0 && plain.verticalVisualOverhang.bottom == 0)
+
+        let viscous = WordEffectResolver.resolveWord(word: "escorrimento", wordIndex: 0, scores: ParameterScores(), phraseSeed: 1)
+        assert(viscous.verticalVisualOverhang.bottom > 10, "Fluido Viscoso deve reservar folga inferior")
+        let chaos = WordEffectResolver.resolveWord(word: "caótico", wordIndex: 0, scores: ParameterScores(), phraseSeed: 1)
+        assert(chaos.horizontalVisualOverhang >= 10, "Caos Imprevisível deve reservar folga horizontal")
 
         let sampleTimes: [Double] = [0.0, 0.2, 0.5, 0.85, 1.0, 2.4]
         for spec in MorphEffectCatalog.allSpecs {
