@@ -5,9 +5,39 @@ import Foundation
 // Nos unipolares, 0 também é um valor informativo e é listado.
 // Atenção: são textos diferentes dos exemplos de teste do app, para não contaminar a avaliação.
 
+struct ParteExemplo {
+    let inicio: String
+    let fim: String
+    let nivel: Int
+    let nucleos: [String]
+}
+
 struct ExemploCalibracao {
     let texto: String
     let itens: [String: (evidencia: String, nivel: Int)]
+    var partesExtras: [String: [ParteExemplo]] = [:]
+
+    /// Exemplos fixos da estrutura por partes: mostram múltiplas partes para o
+    /// mesmo parâmetro, parte cobrindo o texto inteiro e múltiplos núcleos.
+    static let partesFixos: [ExemploCalibracao] = [
+        .init(texto: "O balão subiu leve, mas a âncora afundou no mar.",
+              itens: ["peso": ("a âncora afundou", 4)],
+              partesExtras: ["peso": [
+                  .init(inicio: "O balão subiu", fim: "leve", nivel: -3, nucleos: ["leve"]),
+                  .init(inicio: "a âncora afundou", fim: "afundou", nivel: 4, nucleos: ["afundou"])
+              ]]),
+        .init(texto: "O trovão estourou e o estrondo sacudiu a sala.",
+              itens: ["volume": ("O trovão estourou", 4)],
+              partesExtras: ["volume": [
+                  .init(inicio: "O trovão", fim: "sacudiu a sala", nivel: 4, nucleos: ["trovão", "estrondo"])
+              ]]),
+        .init(texto: "A festa era alegre, mas no canto escuro ele chorava.",
+              itens: ["valencia": ("ele chorava", -3)],
+              partesExtras: ["valencia": [
+                  .init(inicio: "A festa era alegre", fim: "alegre", nivel: 3, nucleos: ["alegre"]),
+                  .init(inicio: "ele chorava", fim: "chorava", nivel: -4, nucleos: ["chorava"])
+              ]])
+    ]
 
     static let todos: [ExemploCalibracao] = [
         .init(texto: "Ele ficou irritado com o atraso e falou mais alto.",
@@ -71,16 +101,29 @@ struct ExemploCalibracao {
 // MARK: - Prompt
 
 enum Instrucoes {
-    private static func regras(defs: [DefinicaoParametro], comEvidencia: Bool) -> String {
+    private static func regras(defs: [DefinicaoParametro], comEvidencia: Bool,
+                               estrutura: EstruturaResposta) -> String {
         let temUnipolar = defs.contains { $0.escala == .unipolar }
+        let semEvidencia = estrutura == .partes
+            ? "não crie parte para essa dimensão"
+            : "use evidência \"nenhuma\" e nível 0"
         var s = "Você analisa textos de escrita criativa (narrativa, poesia, prosa fragmentada) e mede dimensões expressivas deles. Os valores vão controlar a aparência visual do texto, então precisão e honestidade valem mais que criatividade.\n\n"
 
-        if comEvidencia {
+        if estrutura == .partes {
+            s += """
+            PARA CADA DIMENSÃO SOLICITADA, RESPONDA COM PARTES DO TEXTO
+            1. Localize a menor parte contínua do texto que expressa a dimensão. A parte pode ser uma palavra, uma frase ou o texto inteiro.
+            2. inicio: copie literalmente as primeiras palavras da parte. fim: copie literalmente as últimas palavras da parte. Se a parte tiver uma só palavra, inicio e fim são iguais. Para o texto inteiro, use a primeira e a última palavra.
+            3. nivel: um número inteiro, respeitando a escala da dimensão.
+            4. nucleos: copie 0 a 3 palavras ou expressões literais, dentro da parte, onde o efeito é mais forte. Use [] se não houver.
+            5. Se a mesma dimensão aparecer em partes separadas, com intensidades diferentes ou polos opostos, crie uma parte para cada trecho (ex.: peso -3 em "subiu leve" e peso +4 em "afundou").
+            6. Não crie partes para dimensões sem evidência própria.
+            """
+        } else if comEvidencia {
             s += """
             PARA CADA DIMENSÃO SOLICITADA, FAÇA DOIS PASSOS, NESTA ORDEM
-            1. evidencia: copie literalmente do texto a palavra ou o trecho mais curto e exato (até 4 palavras) que indica esta dimensão específica — pois cada animação será aplicada diretamente sobre as palavras citadas (ex: em 'cai a chuva fluida', cite 'cai' para peso e 'fluida' para fluidez). Nunca copie o texto inteiro se apenas parte dele gera o efeito; se não houver pista, escreva exatamente: nenhuma
+            1. evidencia: copie literalmente do texto o trecho mais curto (até 5 palavras) que indica esta dimensão específica. Nunca copie o texto inteiro; se o texto tem 4 palavras ou menos, cite no máximo 2 palavras. Não use uma expressão genérica de emoção. Se nenhum trecho específico indica a dimensão, escreva exatamente: nenhuma
             2. nivel: um número inteiro, respeitando a escala da dimensão.
-            3. ancorasExtras: se um mesmo parâmetro atuar em duas ou mais palavras distintas da frase (especialmente com intensidades diferentes ou polos opostos, ex: 'afunda' com +4 e 'flutua' com -3 em peso), coloque o foco principal nos passos 1-2 e adicione os outros focos em ancorasExtras. Caso haja apenas um foco por parâmetro, deixe ancorasExtras vazio ([]).
             """
         } else {
             s += """
@@ -99,12 +142,16 @@ enum Instrucoes {
         - Atenuadores reduzem a intensidade: 'meio triste', 'um pouco', 'certa' valem 1 ou 2 em módulo; 'muito', 'extremamente' valem 4 ou 5.
         - Use toda a escala. Evite responder apenas 0, 3 ou 5.
         - O nível 0 significa "não há evidência própria desta dimensão", não "intensidade baixa". Uma emoção forte no texto não é evidência para dimensões que ela não descreve. Sinais indiretos e metafóricos contam como evidência.
-        - Teste da especificidade: pergunte "que palavra ou expressão do texto pertence ao campo desta dimensão?" (som para volume, temperatura para calor, tempo para andamento, espaço para abertura etc.). Se a única resposta for uma emoção genérica, o texto inteiro ou uma palavra de outra dimensão sem associação clara, inclusive metafórica, use evidência "nenhuma" e nível 0.
-        - Para calor, luz, abertura, peso e fluidez, a evidência precisa conter uma palavra ou imagem do campo sensorial correspondente (frio/calor; escuro/luz; apertado/amplo; leve/pesado; rígido/fluido), inclusive quando a imagem é metafórica. Sem essa pista, use "nenhuma" e 0.
+        - Teste da especificidade: pergunte "que palavra ou expressão do texto pertence ao campo desta dimensão?" (som para volume, temperatura para calor, tempo para andamento, espaço para abertura etc.). Se a única resposta for uma emoção genérica, o texto inteiro ou uma palavra de outra dimensão sem associação clara, inclusive metafórica, \(semEvidencia).
+        - Para calor, luz, abertura, peso e fluidez, a evidência precisa conter uma palavra ou imagem do campo sensorial correspondente (frio/calor; escuro/luz; apertado/amplo; leve/pesado; rígido/fluido), inclusive quando a imagem é metafórica. Sem essa pista, \(semEvidencia).
 
         """
 
-        if comEvidencia {
+        if estrutura == .partes {
+            s += "- Nas dimensões bipolares, não crie parte quando a leitura for 0. Nas unipolares, 0 é o polo inicial e pode ter parte com evidência; sem evidência específica, não crie parte.\n"
+            s += "- Cada parte precisa de inicio e fim literais e de um nível diferente de 0 (exceto unipolares no polo inicial). Os núcleos, quando existirem, ficam dentro da parte.\n"
+            s += "- O nível nunca vale para o texto inteiro por padrão: se o efeito percorre todo o texto, crie uma parte começando na primeira palavra e terminando na última.\n"
+        } else if comEvidencia {
             s += "- Nas dimensões bipolares, o nível é 0 quando a evidência é 'nenhuma'. Se a evidência for específica da dimensão, o nível não pode ser 0; se for genérica ou o texto inteiro, troque por 'nenhuma' e 0.\n"
             if temUnipolar {
                 s += "- Nas dimensões unipolares, 0 é um valor válido mesmo quando há evidência específica do polo inicial: cite o trecho que mostra o polo inicial. Use 'nenhuma' e 0 apenas quando não houver evidência específica da dimensão.\n"
@@ -132,19 +179,23 @@ enum Instrucoes {
         - Não omita: se há um trecho claro que indica a dimensão, pontue, mesmo que seja discreto. Metáforas valem, com intensidade menor que a imagem literal.
         - Figuras de linguagem contam pelo efeito expressivo, não pelo literal: "morrendo de saudade" expressa saudade, não morte; "explodi de alegria" expressa alegria intensa, não fragmentação.
         - Cada dimensão é independente das outras. Um mesmo trecho pode servir de evidência a mais de uma dimensão, mas cada uma precisa da sua leitura própria.
-        - Julgue o que o texto expressa, não o assunto em abstrato nem a qualidade da escrita. Havendo sinais distintos ou opostos em palavras separadas do texto, registre o foco principal no parâmetro e os demais em ancorasExtras com seu nível próprio.
+        - Julgue o que o texto expressa, não o assunto em abstrato nem a qualidade da escrita. Havendo sinais contraditórios, escolha o polo dominante com intensidade menor.
         """
         return s
     }
 
-    static func sistema(defs: [DefinicaoParametro], comEvidencia: Bool) -> String {
-        var s = regras(defs: defs, comEvidencia: comEvidencia)
+    static func sistema(defs: [DefinicaoParametro], comEvidencia: Bool,
+                        estrutura: EstruturaResposta = .niveis) -> String {
+        var s = regras(defs: defs, comEvidencia: comEvidencia, estrutura: estrutura)
         if defs.count == 1 {
             let d = defs[0]
             s += "\n\nATENÇÃO: esta chamada mede APENAS \(d.id) (\(d.nome)). Não pontue outras dimensões. Emoção forte no texto não é evidência para \(d.nome) sem uma pista específica, inclusive indireta ou metafórica."
             if d.id == "valencia" {
                 s += "\nATENÇÃO À VALÊNCIA: fúria, raiva, ódio, medo, tristeza, dor e perda são NEGATIVOS, mesmo com fogo, grito ou energia. Alegria, paz, amor e alívio são POSITIVOS. Fogo e grito não tornam a valência positiva."
             }
+        }
+        if estrutura == .partes {
+            s += "\n\nESTRUTURA DA RESPOSTA\nResponda com partes. O nível pertence sempre a uma parte; não existe nível único para o texto inteiro. Prefira partes curtas e precisas; use o texto inteiro apenas quando o efeito realmente percorre todo o texto."
         }
         s += "\n\nDIMENSÕES A MEDIR\n"
         for (i, d) in defs.enumerated() {
@@ -164,21 +215,32 @@ enum Instrucoes {
                 s += "\n   Âncoras: \(d.ancoras)"
             }
         }
+        var exemplos = exemplosPara(defs)
+        if estrutura == .partes {
+            let ids = Set(defs.map(\.id))
+            for ex in ExemploCalibracao.partesFixos
+            where ex.itens.keys.contains(where: { ids.contains($0) })
+                && !exemplos.contains(where: { $0.texto == ex.texto }) {
+                exemplos.insert(ex, at: min(1, exemplos.count))
+            }
+        }
         s += "\n\nEXEMPLOS DE CALIBRAÇÃO"
-        for ex in exemplosPara(defs) {
+        for ex in exemplos {
             s += "\n\nTexto: \"\(ex.texto)\""
-            s += linhas(de: ex, defs: defs, comEvidencia: comEvidencia)
+            s += linhas(de: ex, defs: defs, comEvidencia: comEvidencia, estrutura: estrutura)
         }
         return s
     }
 
     static func sistemaCompacto(defs: [DefinicaoParametro], comEvidencia: Bool,
-                                variante: VarianteCompacta) -> String {
+                                variante: VarianteCompacta,
+                                estrutura: EstruturaResposta = .niveis) -> String {
         let temUnipolar = defs.contains { $0.escala == .unipolar }
         var s = "Você mede dimensões expressivas de textos criativos. Seja preciso e honesto; não invente.\n"
-        if comEvidencia {
-            s += "Para cada dimensão, cite em evidencia a palavra ou trecho curto exato (até 4 palavras) que gera o efeito (ex: 'cai' para peso, 'fluida' para fluidez; não copie a frase inteira) ou escreva exatamente: nenhuma. Depois dê o nível.\n"
-            s += "Se um parâmetro atuar em outra palavra distinta da frase (ou em polo oposto), adicione esse foco em ancorasExtras; se não, deixe ancorasExtras vazio ([]).\n"
+        if estrutura == .partes {
+            s += "Responda com partes contínuas do texto: inicio e fim literais, nível próprio da parte e 0 a 3 núcleos (palavras ou expressões literais dentro da parte onde o efeito é mais forte). A mesma dimensão pode ter várias partes, inclusive com polos opostos. Não crie parte sem evidência própria.\n"
+        } else if comEvidencia {
+            s += "Para cada dimensão, primeiro cite um trecho literal de até 5 palavras ou escreva exatamente: nenhuma. Depois dê o nível.\n"
         } else {
             s += "Para cada dimensão, dê apenas o nível.\n"
         }
@@ -197,10 +259,19 @@ enum Instrucoes {
         }
         if variante != .semExemplos {
             let limite = variante == .comExemplos ? 5 : 3
+            var exemplos = exemplosPara(defs, limite: limite)
+            if estrutura == .partes {
+                let ids = Set(defs.map(\.id))
+                for ex in ExemploCalibracao.partesFixos
+                where ex.itens.keys.contains(where: { ids.contains($0) })
+                    && !exemplos.contains(where: { $0.texto == ex.texto }) {
+                    exemplos.insert(ex, at: min(1, exemplos.count))
+                }
+            }
             s += "\n\nEXEMPLOS"
-            for ex in exemplosPara(defs, limite: limite) {
+            for ex in exemplos {
                 s += "\n\nTexto: \"\(ex.texto)\""
-                s += linhas(de: ex, defs: defs, comEvidencia: comEvidencia)
+                s += linhas(de: ex, defs: defs, comEvidencia: comEvidencia, estrutura: estrutura)
             }
         }
         return s
@@ -214,9 +285,34 @@ enum Instrucoes {
 
     private static func sinal(_ n: Int) -> String { n > 0 ? "+\(n)" : "\(n)" }
 
-    private static func linhas(de ex: ExemploCalibracao, defs: [DefinicaoParametro], comEvidencia: Bool) -> String {
+    private static func linhas(de ex: ExemploCalibracao, defs: [DefinicaoParametro],
+                               comEvidencia: Bool, estrutura: EstruturaResposta) -> String {
         let presentes = defs.compactMap { d in ex.itens[d.id].map { (d, $0) } }
         var s = ""
+        if estrutura == .partes {
+            if presentes.isEmpty {
+                s += defs.count == 1 ? "\n\(defs[0].id): partes []" : "\nTodas as dimensões acima: partes []"
+                return s
+            }
+            for (d, item) in presentes {
+                let partes = ex.partesExtras[d.id] ?? [
+                    ParteExemplo(inicio: item.evidencia, fim: item.evidencia,
+                                 nivel: item.nivel, nucleos: [item.evidencia])
+                ]
+                let descricao = partes.map { p -> String in
+                    let nivel = d.escala == .unipolar ? "\(p.nivel)" : sinal(p.nivel)
+                    let nucleos = p.nucleos.isEmpty
+                        ? "[]"
+                        : "[" + p.nucleos.map { "\"\($0)\"" }.joined(separator: ", ") + "]"
+                    return "parte de \"\(p.inicio)\" a \"\(p.fim)\", nível \(nivel), núcleos \(nucleos)"
+                }.joined(separator: "; ")
+                s += "\n\(d.id): \(descricao)"
+            }
+            if presentes.count < defs.count {
+                s += "\nDemais dimensões: partes []"
+            }
+            return s
+        }
         if presentes.isEmpty {
             if defs.count == 1 {
                 let d = defs[0]

@@ -9,24 +9,28 @@ struct Filtros {
     var limiar = 0                   // ignora |nível| menor que este valor
 }
 
-struct AncoraPalavra: Identifiable, Hashable, Sendable {
-    var id: String { "\(trecho)|\(nivel)|\(principal)" }
-    let trecho: String
+/// Trecho contínuo do texto ao qual um parâmetro se aplica, com nível próprio
+/// e núcleos (pontos de maior intensidade) medidos em offsets UTF-16.
+struct ParteIntervalo: Identifiable, Hashable, Sendable {
+    let inicioUTF16: Int
+    let fimUTF16: Int
     let nivel: Int
-    let literal: Bool
-    let principal: Bool
+    let nucleos: [Range<Int>]        // offsets UTF-16 dentro do texto
+    let nucleosTexto: [String]
+    let inicioTexto: String
+    let fimTexto: String
 
-    var valor: Double { Double(nivel) / 5.0 }
+    var id: String { "\(inicioUTF16)-\(fimUTF16)-\(nivel)" }
 }
 
 struct ResultadoParametro {
-    let nivel: Int               // -5...+5 (bipolar) ou 0...+5 (unipolar)
+    let nivel: Int               // -5...+5 (bipolar) ou 0...+5 (unipolar), nível dominante
     let evidencia: String?       // nil no modo "só números"
     let contradicao: Bool        // nível ≠ 0, mas evidência 'nenhuma'
     let naoLiteral: Bool         // nível ≠ 0, evidência presente, mas ausente do texto
-    var ancoras: [AncoraPalavra] = []
+    var partes: [ParteIntervalo] = []
 
-    var valor: Double { Double(nivel) / 5.0 }
+    var valor: Double { Double(nivel) / 5.0 }   // escala exibida: -1...+1
 
     func valorEfetivo(_ f: Filtros) -> Double {
         if abs(nivel) < f.limiar { return 0 }
@@ -36,6 +40,7 @@ struct ResultadoParametro {
     }
 }
 
+/// Uma chamada individual ao modelo dentro de uma execução.
 struct ChamadaExecucao: Identifiable {
     let id = UUID()
     let rotulo: String
@@ -52,7 +57,9 @@ struct ChamadaExecucao: Identifiable {
 struct FalhaConfiguracao: Identifiable {
     let id = UUID()
     let modo: ModoChamadas
+    let estrutura: EstruturaResposta
     let comEvidencia: Bool
+    let provedor: Provedor
     let modelo: String
     let mensagem: String
 }
@@ -62,12 +69,14 @@ struct Execucao: Identifiable {
     let numero: Int
     let texto: String
     let modo: ModoChamadas
+    let estrutura: EstruturaResposta
     let comEvidencia: Bool
     let deterministico: Bool
+    let provedor: Provedor
     let modelo: String
     let resultados: [String: ResultadoParametro]
     let chamadas: [ChamadaExecucao]
-    let fria: Bool
+    let fria: Bool            // primeira execução desde a abertura do app (sem pré-aquecimento)
 
     var segundos: Double { chamadas.reduce(0) { $0 + $1.segundos } }
     var caracteresPrompt: Int { chamadas.reduce(0) { $0 + $1.caracteresPrompt } }
@@ -78,8 +87,10 @@ struct Execucao: Identifiable {
     var naoLiterais: Int { resultados.values.filter(\.naoLiteral).count }
 }
 
+/// Resumo de latência por configuração, usado no painel comparativo.
 struct ResumoConfiguracao: Identifiable {
     let modo: ModoChamadas
+    let estrutura: EstruturaResposta
     let comEvidencia: Bool
     let deterministico: Bool
     let amostras: Int
@@ -89,17 +100,21 @@ struct ResumoConfiguracao: Identifiable {
     let mediaTokensEntrada: Double
     let mediaTokensSaida: Double
 
-    var id: String { "\(modo.rawValue)|\(comEvidencia)|\(deterministico)" }
+    var id: String { "\(modo.rawValue)|\(estrutura.rawValue)|\(comEvidencia)|\(deterministico)" }
 }
 
 struct ConfiguracaoResultado: Identifiable, Hashable {
     let modo: ModoChamadas
+    let estrutura: EstruturaResposta
     let comEvidencia: Bool
     let deterministico: Bool
 
-    var id: String { "\(modo.rawValue)|\(comEvidencia)|\(deterministico)" }
+    var id: String { "\(modo.rawValue)|\(estrutura.rawValue)|\(comEvidencia)|\(deterministico)" }
     var titulo: String {
-        "\(modo.tituloCurto) · \(comEvidencia ? "com evidência" : "só números")\(deterministico ? " · greedy" : "")"
+        let base = estrutura == .partes
+            ? "\(modo.tituloCurto) · partes"
+            : "\(modo.tituloCurto) · \(comEvidencia ? "com evidência" : "só números")"
+        return base + (deterministico ? " · greedy" : "")
     }
 }
 

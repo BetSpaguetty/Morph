@@ -10,6 +10,7 @@ struct TextView: View {
     @State private var scrollController = RetroScrollController()
     @State private var texto: String = ""
     @State private var modo: ModoChamadas = .umaChamada
+    @State private var estrutura: EstruturaResposta = .partes
     @State private var comEvidencia: Bool = true
     @State private var deterministico: Bool = false
     @State private var filtros = Filtros()
@@ -132,6 +133,7 @@ struct TextView: View {
                 keyboardConfig: keyboardConfig,
                 texto: $texto,
                 modo: $modo,
+                estrutura: $estrutura,
                 comEvidencia: $comEvidencia,
                 deterministico: $deterministico,
                 filtros: $filtros,
@@ -141,6 +143,7 @@ struct TextView: View {
         }
         .onChange(of: texto) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: interpretador.lote.count) { _, _ in recomputarScoresPorPalavra() }
+        .onChange(of: estrutura) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.limiar) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarContradicoes) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: filtros.zerarNaoLiterais) { _, _ in recomputarScoresPorPalavra() }
@@ -349,6 +352,7 @@ struct TextView: View {
                 texto: textoAlvo,
                 repeticoes: repeticoes,
                 modo: modo,
+                estrutura: estrutura,
                 comEvidencia: comEvidencia,
                 deterministico: deterministico
             )

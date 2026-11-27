@@ -55,6 +55,10 @@ public struct ChatCompletionsLanguageModel: Sendable {
 
   public var supportsGuidedGeneration: Bool
 
+  /// Controls how much reasoning effort the provider should spend when it
+  /// supports the `reasoning_effort` extension (for example, Gemini thinking).
+  public var reasoningEffort: String?
+
   // Overridden in tests to inject a URLSession with mock protocol handlers.
   var urlSession: URLSession?
 
@@ -77,12 +81,14 @@ public struct ChatCompletionsLanguageModel: Sendable {
     url: URL,
     additionalHeaders: [String: String] = [:],
     supportsGuidedGeneration: Bool = true,
+    reasoningEffort: String? = nil,
     urlSessionConfiguration: URLSessionConfiguration? = nil
   ) {
     self.name = name
     self.url = url
     self.additionalHeaders = additionalHeaders
     self.supportsGuidedGeneration = supportsGuidedGeneration
+    self.reasoningEffort = reasoningEffort
     self.urlSession = urlSessionConfiguration.map { URLSession(configuration: $0) }
   }
 
@@ -98,7 +104,8 @@ public struct ChatCompletionsLanguageModel: Sendable {
     instructions: String,
     prompt: String,
     generating type: Content.Type,
-    temperature: Double? = nil
+    temperature: Double? = nil,
+    maxCompletionTokens: Int? = nil
   ) async throws -> DirectResponse<Content> {
     let client = Self.makeClient(
       url: url,
@@ -126,16 +133,22 @@ public struct ChatCompletionsLanguageModel: Sendable {
         )
       ],
       temperature: temperature,
-      responseFormat: responseFormat
+      maxCompletionTokens: maxCompletionTokens,
+      responseFormat: responseFormat,
+      reasoningEffort: reasoningEffort
     )
 
     var jsonText = ""
     var promptTokens: Int?
     var cachedPromptTokens: Int?
     var completionTokens: Int?
+    var finishReason: String?
     for try await chunk in client.streamChatCompletions(request: chatRequest) {
       if let text = chunk.choices.first?.delta.content {
         jsonText += text
+      }
+      if let reason = chunk.choices.first?.finishReason {
+        finishReason = reason
       }
       if let usage = chunk.usage {
         promptTokens = usage.promptTokens
@@ -145,11 +158,27 @@ public struct ChatCompletionsLanguageModel: Sendable {
     }
 
     let trimmed = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
+    if finishReason == "content_filter" {
+      throw RequestError.contentFiltered
+    }
     guard !trimmed.isEmpty else {
+      throw RequestError.emptyResponse
+    }
+    if finishReason == "length" {
+      throw RequestError.outputTruncated(partialCharacters: trimmed.count)
+    }
+    let generated: GeneratedContent
+    do {
+      generated = try GeneratedContent(json: trimmed)
+    } catch {
       throw RequestError.invalidStreamData
     }
-    let generated = try GeneratedContent(json: trimmed)
-    let content = try Content(generated)
+    let content: Content
+    do {
+      content = try Content(generated)
+    } catch {
+      throw RequestError.invalidStreamData
+    }
     return DirectResponse(
       content: content,
       promptTokens: promptTokens,
@@ -232,6 +261,21 @@ public struct ChatCompletionsLanguageModel: Sendable {
     /// values contain the status code and the raw response body.
     case httpError(statusCode: Int, data: Data)
 
+    /// The stream ended without a `[DONE]` sentinel or a `finish_reason`,
+    /// which indicates the provider dropped the connection mid-response.
+    case incompleteStream
+
+    /// The provider stopped generating because the output token limit was
+    /// reached. The associated value contains the number of characters that
+    /// were received before truncation.
+    case outputTruncated(partialCharacters: Int)
+
+    /// The provider returned no text and no tool calls.
+    case emptyResponse
+
+    /// The provider blocked the content with a content filter.
+    case contentFiltered
+
     public var errorDescription: String? {
       switch self {
       case .invalidRequest(let description):
@@ -243,6 +287,14 @@ public struct ChatCompletionsLanguageModel: Sendable {
         HTTP error with status code \(statusCode):
         \(String(data: data, encoding: .utf8) ?? data.description)
         """
+      case .incompleteStream:
+        "The response stream ended before completion"
+      case .outputTruncated(let partialCharacters):
+        "The response was truncated after \(partialCharacters) characters"
+      case .emptyResponse:
+        "The provider returned an empty response"
+      case .contentFiltered:
+        "The provider blocked the content with a content filter"
       }
     }
   }
@@ -280,6 +332,7 @@ extension ChatCompletionsLanguageModel: LanguageModel {
       modelName: name,
       url: url,
       additionalHeaders: additionalHeaders,
+      reasoningEffort: reasoningEffort,
       urlSession: urlSession
     )
   }
@@ -296,18 +349,21 @@ extension ChatCompletionsLanguageModel: LanguageModel {
       fileprivate let modelName: String
       fileprivate let url: URL
       fileprivate let additionalHeaders: [String: String]
+      fileprivate let reasoningEffort: String?
       fileprivate let urlSession: URLSession?
 
       public static func == (lhs: Configuration, rhs: Configuration) -> Bool {
         lhs.modelName == rhs.modelName
           && lhs.url == rhs.url
           && lhs.additionalHeaders == rhs.additionalHeaders
+          && lhs.reasoningEffort == rhs.reasoningEffort
       }
 
       public func hash(into hasher: inout Hasher) {
         hasher.combine(modelName)
         hasher.combine(url)
         hasher.combine(additionalHeaders)
+        hasher.combine(reasoningEffort)
       }
     }
 
@@ -355,7 +411,8 @@ extension ChatCompletionsLanguageModel: LanguageModel {
               schema: schema
             )
           )
-        }
+        },
+        reasoningEffort: configuration.reasoningEffort
       )
 
       // Stream the response back into the framework via `channel`.
