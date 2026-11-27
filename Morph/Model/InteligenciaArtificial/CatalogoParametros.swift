@@ -72,6 +72,31 @@ enum ModoChamadas: String, CaseIterable, Identifiable {
     }
 }
 
+/// Estrutura da resposta do modelo: um nível por parâmetro (legado)
+/// ou partes do texto por parâmetro, cada parte com nível e núcleos.
+enum EstruturaResposta: String, CaseIterable, Identifiable, Hashable {
+    case niveis = "Nível por parâmetro"
+    case partes = "Partes por parâmetro"
+
+    var id: String { rawValue }
+
+    var tituloCurto: String {
+        switch self {
+        case .niveis: return "níveis"
+        case .partes: return "partes"
+        }
+    }
+
+    var descricao: String {
+        switch self {
+        case .niveis:
+            return "Um nível para o texto inteiro (legado). Serve para comparar com a estrutura por partes."
+        case .partes:
+            return "Cada parâmetro tem partes do texto, com nível próprio e núcleos. Não existe mais um nível único para o texto inteiro."
+        }
+    }
+}
+
 // MARK: - Catálogo (fonte única da verdade: gera o prompt e os rótulos da interface)
 
 struct DefinicaoParametro: Identifiable {

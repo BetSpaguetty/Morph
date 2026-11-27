@@ -25,6 +25,7 @@ struct LinhaParametro: View {
     let media: Double
     let desvio: Double?
     let ultimo: ResultadoParametro?
+    var estrutura: EstruturaResposta = .niveis
 
     private var semValor: Bool { def.escala == .bipolar && abs(media) < 0.05 }
 
@@ -59,46 +60,67 @@ struct LinhaParametro: View {
                     .foregroundStyle(semValor ? .secondary : .primary)
             }
 
-            if def.escala == .unipolar {
-                BarraUnipolar(valor: max(0, media)).frame(height: 10)
+            if estrutura == .partes {
+                let partes = ultimo?.partes ?? []
+                if partes.isEmpty {
+                    Text("sem partes nesta execução").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(partes) { parte in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(parte.nivel > 0 ? "+\(parte.nivel)" : "\(parte.nivel)")
+                                    .font(.caption2.bold().monospacedDigit())
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(.quaternary, in: Capsule())
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("“\(parte.inicioTexto)…\(parte.fimTexto)”")
+                                        .font(.caption)
+                                    if !parte.nucleosTexto.isEmpty {
+                                        Text("núcleos: \(parte.nucleosTexto.joined(separator: ", "))")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let u = ultimo, u.naoLiteral {
+                    Label("parte não encontrada literalmente no texto", systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             } else {
-                BarraBipolar(valor: media).frame(height: 10)
-            }
+                if def.escala == .unipolar {
+                    BarraUnipolar(valor: max(0, media)).frame(height: 10)
+                } else {
+                    BarraBipolar(valor: media).frame(height: 10)
+                }
 
-            HStack {
-                Text(def.poloNegativo)
-                Spacer()
-                Text(def.poloPositivo)
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+                HStack {
+                    Text(def.poloNegativo)
+                    Spacer()
+                    Text(def.poloPositivo)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
-            if let u = ultimo, (u.evidencia != nil || !u.ancoras.isEmpty), (u.nivel != 0 || def.escala == .unipolar || !u.ancoras.isEmpty) {
-                VStack(alignment: .leading, spacing: 2) {
-                    if let ev = u.evidencia {
+                if let u = ultimo, let ev = u.evidencia, (u.nivel != 0 || def.escala == .unipolar) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Última execução: nível \(nivelFormatado), evidência “\(ev)”")
                             .font(.caption)
                             .italic()
                             .foregroundStyle(.secondary)
-                    }
-                    let extras = u.ancoras.filter { !$0.principal }
-                    if !extras.isEmpty {
-                        let listaExtras = extras.map { a in
-                            let valStr = def.escala == .unipolar ? "\(a.nivel)" : (a.nivel > 0 ? "+\(a.nivel)" : "\(a.nivel)")
-                            return "“\(a.trecho)” (\(valStr))"
-                        }.joined(separator: " · ")
-                        Text("Âncoras extras: \(listaExtras)")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    if u.contradicao {
-                        Label("o modelo deu nível sem apresentar evidência", systemImage: "exclamationmark.triangle")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    } else if u.naoLiteral {
-                        Label("citação não encontrada literalmente no texto", systemImage: "exclamationmark.triangle")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
+                        if u.contradicao {
+                            Label("o modelo deu nível sem apresentar evidência", systemImage: "exclamationmark.triangle")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        } else if u.naoLiteral {
+                            Label("citação não encontrada literalmente no texto", systemImage: "exclamationmark.triangle")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
             }

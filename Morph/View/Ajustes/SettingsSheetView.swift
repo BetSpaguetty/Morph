@@ -17,6 +17,7 @@ struct SettingsSheetView: View {
     @Bindable var keyboardConfig: MorphKeyboardVisualConfig
     @Binding var texto: String
     @Binding var modo: ModoChamadas
+    @Binding var estrutura: EstruturaResposta
     @Binding var comEvidencia: Bool
     @Binding var deterministico: Bool
     @Binding var filtros: Filtros
@@ -41,10 +42,10 @@ struct SettingsSheetView: View {
     }
 
     private var statusTexto: String {
-        if interpretador.executando { return "Gemini · Interpretando..." }
-        if interpretador.erro != nil { return "Gemini · Erro na requisição" }
-        if interpretador.indisponibilidade != nil { return "Gemini · Chave pendente" }
-        return "Gemini · Pronto"
+        if interpretador.executando { return "\(interpretador.provedor.tituloCurto) · Interpretando..." }
+        if interpretador.erro != nil { return "\(interpretador.provedor.tituloCurto) · Erro na requisição" }
+        if interpretador.indisponibilidade != nil { return "\(interpretador.provedor.tituloCurto) · Chave pendente" }
+        return "\(interpretador.provedor.tituloCurto) · Pronto"
     }
 
     private var descricaoDoModo: String {
@@ -52,23 +53,30 @@ struct SettingsSheetView: View {
         case .umaChamada:
             return "Um schema com os 15 parâmetros. Menos chamadas, mas prompt maior e saída mais longa."
         case .porGrupo:
-            return "Três schemas de cinco parâmetros. Equilíbrio entre contexto, paralelismo e tamanho da saída."
+            return "Três schemas de cinco parâmetros. Equilíbrio entre contexto e tamanho da saída."
         case .porParametro:
             return "Quinze schemas de um parâmetro. Instruções mais curtas por chamada, porém com 15 idas ao modelo."
         }
     }
 
     private var promptsVisiveis: [(String, String)] {
+        let evidencias = estrutura == .partes ? true : comEvidencia
         switch modo {
         case .umaChamada:
-            return [("Chamada única (15 parâmetros)", Instrucoes.sistema(defs: Catalogo.todos, comEvidencia: comEvidencia))]
+            return [("Chamada única (15 parâmetros; pode ser compactada automaticamente)",
+                     Instrucoes.sistema(defs: Catalogo.todos, comEvidencia: evidencias,
+                                        estrutura: estrutura))]
         case .porGrupo:
             return GrupoChamada.allCases.map { g in
-                (g.titulo, Instrucoes.sistema(defs: Catalogo.definicoes(do: g), comEvidencia: comEvidencia))
+                (g.titulo, Instrucoes.sistema(defs: Catalogo.definicoes(do: g),
+                                              comEvidencia: evidencias,
+                                              estrutura: estrutura))
             }
         case .porParametro:
             let d = Catalogo.todos[0]
-            return [("Exemplo: chamada de \(d.nome)", Instrucoes.sistema(defs: [d], comEvidencia: comEvidencia))]
+            return [("Exemplo: chamada de \(d.nome) (as outras seguem o mesmo molde)",
+                     Instrucoes.sistema(defs: [d], comEvidencia: evidencias,
+                                        estrutura: estrutura))]
         }
     }
 
@@ -294,6 +302,19 @@ struct SettingsSheetView: View {
                         UserDefaults.standard.set(nova, forKey: "geminiAPIKey")
                     }
 
+                Picker("Nível de raciocínio", selection: $interpretador.nivelRaciocinio) {
+                    ForEach(NivelRaciocinio.allCases) { nivel in
+                        Text(nivel.titulo).tag(nivel)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: interpretador.nivelRaciocinio) { _, novo in
+                    UserDefaults.standard.set(novo.rawValue, forKey: "geminiThinking")
+                }
+                Text("Thinking alto melhora a qualidade, mas aumenta tokens de saída, custo e TPM. O nível é enviado ao Gemini como reasoning_effort.")
+                    .font(FontRegistrationManager.chicago(size: 11))
+                    .foregroundStyle(.secondary)
+
                 HStack(spacing: 8) {
                     Button {
                         interpretador.usarChaveDaBuild()
@@ -374,10 +395,29 @@ struct SettingsSheetView: View {
                     .font(FontRegistrationManager.chicago(size: 11))
                     .foregroundStyle(.secondary)
 
+                HStack {
+                    Text("Estrutura da resposta")
+                    Spacer()
+                    Picker("Estrutura da resposta", selection: $estrutura) {
+                        ForEach(EstruturaResposta.allCases) { Text($0.tituloCurto).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 220)
+                }
+                Text(estrutura == .partes
+                     ? "Partes por parâmetro: cada parâmetro traz trechos com início, fim, núcleos e nível próprio. O nível do parâmetro é o da parte dominante. A evidência é sempre exigida."
+                     : "Nível único para o texto inteiro, com uma citação de evidência por parâmetro.")
+                    .font(FontRegistrationManager.chicago(size: 11))
+                    .foregroundStyle(.secondary)
+
                 Toggle("Incluir evidências (citação do trecho)", isOn: $comEvidencia)
-                Text(comEvidencia
-                     ? "Com citação: permite distribuir as animações palavra a palavra na frase."
-                     : "Só números: menos tokens de saída, aplica o valor global na frase.")
+                    .disabled(estrutura == .partes)
+                Text(estrutura == .partes
+                     ? "Na estrutura por partes, a própria parte é a evidência; esta opção não se aplica."
+                     : (comEvidencia
+                        ? "Com citação: permite distribuir as animações palavra a palavra na frase."
+                        : "Só números: menos tokens de saída, aplica o valor global na frase."))
                     .font(FontRegistrationManager.chicago(size: 11))
                     .foregroundStyle(.secondary)
 
@@ -443,7 +483,7 @@ struct SettingsSheetView: View {
                 if let u = interpretador.execucoes.last {
                     LabeledContent("Última (total)", value: fmt(u.segundos) + (u.fria ? " (partida a frio)" : ""))
                     LabeledContent("Modelo", value: "Gemini · \(u.modelo)")
-                    LabeledContent("Configuração", value: "\(u.modo.tituloCurto) · \(u.comEvidencia ? "com evidência" : "só números") · \(u.deterministico ? "greedy" : "amostragem")")
+                    LabeledContent("Configuração", value: "\(u.modo.tituloCurto) · \(u.estrutura.tituloCurto) · \(u.comEvidencia ? "com evidência" : "só números") · \(u.deterministico ? "greedy" : "amostragem")")
                     let n = u.chamadas.count
                     LabeledContent("Chamadas", value: "\(n), média \(fmt(u.segundos / Double(max(n, 1))))")
                     LabeledContent("Prompt total", value: "\(u.caracteresPrompt) caracteres")
@@ -469,7 +509,8 @@ struct SettingsSheetView: View {
                 }
 
                 let q = interpretador.latenciasQuentes(
-                    modo: modo, comEvidencia: comEvidencia,
+                    modo: modo, estrutura: estrutura,
+                    comEvidencia: estrutura == .partes ? true : comEvidencia,
                     deterministico: deterministico, texto: interpretador.textoDoLote
                 )
                 if !q.isEmpty {
@@ -477,7 +518,7 @@ struct SettingsSheetView: View {
                     LabeledContent("Mínima / máxima", value: "\(fmt(q.min() ?? 0)) / \(fmt(q.max() ?? 0))")
                 }
                 if let fria = interpretador.execucoes.first(where: \.fria) {
-                    LabeledContent("Partida a frio", value: "\(fmt(fria.segundos)) · \(fria.modo.tituloCurto) · \(fria.comEvidencia ? "com evidência" : "só números")")
+                    LabeledContent("Partida a frio", value: "\(fmt(fria.segundos)) · \(fria.modo.tituloCurto) · \(fria.estrutura.tituloCurto) · \(fria.comEvidencia ? "com evidência" : "só números")")
                 }
                 LabeledContent("Execuções no app", value: "\(interpretador.execucoes.count)")
             }
@@ -499,7 +540,7 @@ struct SettingsSheetView: View {
                     ForEach(resumos) { r in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Text("\(r.modo.tituloCurto) · \(r.comEvidencia ? "com evidência" : "só números") · \(r.deterministico ? "greedy" : "amostragem")")
+                                Text("\(r.modo.tituloCurto) · \(r.estrutura.tituloCurto) · \(r.comEvidencia ? "com evidência" : "só números") · \(r.deterministico ? "greedy" : "amostragem")")
                                     .font(FontRegistrationManager.chicago(size: 12))
                                 Spacer()
                                 Text("\(r.amostras)× · média \(fmt(r.media))")
@@ -601,7 +642,8 @@ struct SettingsSheetView: View {
                                 def: d,
                                 media: interpretador.media(d.id, filtros),
                                 desvio: interpretador.desvio(d.id, filtros),
-                                ultimo: interpretador.ultimo(d.id)
+                                ultimo: interpretador.ultimo(d.id),
+                                estrutura: interpretador.lote.last?.estrutura ?? estrutura
                             )
                         }
                     }

@@ -157,6 +157,7 @@ struct ChatCompletionsClient {
     var tools: [Tool]?
     var toolChoice: ChatCompletionRequest.ToolChoice?
     var responseFormat: ResponseFormat?
+    var reasoningEffort: String?
     var stream = true
     var streamOptions = StreamOptions(includeUsage: true)
 
@@ -176,6 +177,7 @@ struct ChatCompletionsClient {
       case maxCompletionTokens = "max_completion_tokens"
       case tools
       case responseFormat = "response_format"
+      case reasoningEffort = "reasoning_effort"
       case stream
       case streamOptions = "stream_options"
       case toolChoice = "tool_choice"
@@ -285,6 +287,12 @@ struct ChatCompletionsClient {
 
     struct Choice: Decodable {
       let delta: Delta
+      let finishReason: String?
+
+      private enum CodingKeys: String, CodingKey {
+        case delta
+        case finishReason = "finish_reason"
+      }
 
       struct Delta: Decodable {
         var role: String?

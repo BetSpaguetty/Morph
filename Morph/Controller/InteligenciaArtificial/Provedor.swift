@@ -1,29 +1,57 @@
 import Foundation
 import FoundationModels
 
+enum NivelRaciocinio: String, CaseIterable, Identifiable, Hashable {
+    case minimal
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+
+    var titulo: String {
+        switch self {
+        case .minimal: return "Mínimo"
+        case .low: return "Baixo"
+        case .medium: return "Médio"
+        case .high: return "Alto"
+        }
+    }
+}
+
+enum Provedor: String, CaseIterable, Identifiable, Hashable {
+    case gemini
+
+    var id: String { rawValue }
+
+    var titulo: String {
+        switch self {
+        case .gemini: return "Gemini (API)"
+        }
+    }
+
+    var tituloCurto: String {
+        switch self {
+        case .gemini: return "Gemini"
+        }
+    }
+}
+
 struct ConfiguracaoProvedor: Equatable {
+    var provedor: Provedor = .gemini
     var modeloGemini: String = "gemini-3.5-flash-lite"
     var chaveGemini: String = ""
     var baseURLGemini: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai")!
+    var nivelRaciocinio: NivelRaciocinio = .high
 
-    var modelo: String { modeloGemini }
+    var modelo: String {
+        switch provedor {
+        case .gemini: return "\(modeloGemini) · \(nivelRaciocinio.titulo)"
+        }
+    }
 
     var temChave: Bool {
         !chaveGemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var indisponibilidade: String? {
-        temChave ? nil : "Informe a chave da API do Gemini nos Ajustes."
-    }
-
-    var contextSize: Int { 1_000_000 }
-
-    func estimarTokens(_ texto: String) -> Int {
-        max(1, texto.count / 4)
-    }
-
-    func opcoes(deterministico: Bool) -> GenerationOptions {
-        deterministico ? GenerationOptions(temperature: 0) : GenerationOptions()
     }
 }
 
@@ -36,26 +64,58 @@ struct RespostaModelo<T: Generable> {
 
 @MainActor
 extension ConfiguracaoProvedor {
-    func responder<T: Generable & Sendable>(
-        instructions: String,
-        prompt: String,
-        generating tipo: T.Type,
-        deterministico: Bool
-    ) async throws -> RespostaModelo<T> {
+    var indisponibilidade: String? {
+        switch provedor {
+        case .gemini:
+            return temChave ? nil : "Informe a chave da API do Gemini."
+        }
+    }
+
+    var contextSize: Int {
+        switch provedor {
+        case .gemini: return 1_000_000
+        }
+    }
+
+    func estimarTokens(_ texto: String) async -> Int {
+        max(1, texto.count / 4)
+    }
+
+    func opcoes(deterministico: Bool) -> GenerationOptions {
+        GenerationOptions(
+            temperature: deterministico ? 0 : nil,
+            maximumResponseTokens: 65_536
+        )
+    }
+
+    func novaSessao(instructions: String) -> LanguageModelSession {
+        guard #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) else {
+            fatalError("O caminho de LanguageModelSession exige iOS/macOS 27.")
+        }
         let modelo = ChatCompletionsLanguageModel(
             name: modeloGemini,
             url: baseURLGemini,
             additionalHeaders: [
                 "Authorization": "Bearer \(chaveGemini.trimmingCharacters(in: .whitespacesAndNewlines))"
-            ]
+            ],
+            reasoningEffort: nivelRaciocinio.rawValue
         )
+        return LanguageModelSession(model: modelo, instructions: instructions)
+    }
 
+    func responder<T: Generable & Sendable>(
+        instructions: String,
+        prompt: String,
+        generating tipo: T.Type,
+        deterministico: Bool,
+        opcoes: GenerationOptions
+    ) async throws -> RespostaModelo<T> {
         if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
-            let sessao = LanguageModelSession(model: modelo, instructions: instructions)
+            let sessao = novaSessao(instructions: instructions)
             let resposta = try await sessao.respond(
                 to: prompt,
                 generating: tipo,
-                options: opcoes(deterministico: deterministico)
+                options: opcoes
             )
             return RespostaModelo(
                 content: resposta.content,
@@ -64,11 +124,25 @@ extension ConfiguracaoProvedor {
                 tokensSaida: resposta.usage.output.totalTokenCount
             )
         } else {
+            guard provedor == .gemini else {
+                throw ChatCompletionsLanguageModel.RequestError.invalidRequest(
+                    "Provedor não suportado nesta versão do sistema."
+                )
+            }
+            let modelo = ChatCompletionsLanguageModel(
+                name: modeloGemini,
+                url: baseURLGemini,
+                additionalHeaders: [
+                    "Authorization": "Bearer \(chaveGemini.trimmingCharacters(in: .whitespacesAndNewlines))"
+                ],
+                reasoningEffort: nivelRaciocinio.rawValue
+            )
             let resposta = try await modelo.respondDirect(
                 instructions: instructions,
                 prompt: prompt,
                 generating: tipo,
-                temperature: deterministico ? 0 : nil
+                temperature: deterministico ? 0 : nil,
+                maxCompletionTokens: opcoes.maximumResponseTokens
             )
             return RespostaModelo(
                 content: resposta.content,
