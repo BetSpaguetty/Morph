@@ -33,9 +33,20 @@ struct HomeView: View {
             .blendMode(.multiply)
 
             Button {
-                router.push(.editor)
+                router.push(.editor(fileID: nil))
             } label: {
                 Image("botao_create")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 350, height: 100)
+                    .crtHitAdjusted()
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                router.push(.files)
+            } label: {
+                Image("botao_files")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 350, height: 100)
