@@ -88,30 +88,34 @@ final class FontRegistrationManager {
         return tokens.contains { felineTerms.contains($0) }
     }
 
-    /// Resolve a tipografia combinando Tom (-5..+5), Volume (-5..+5) e Domínio (-5..+5).
-    /// Regra definida para o Tom:
-    /// -5 e -4 -> Times New Roman
-    /// -3 e -2 -> Serif (Serrif bundled / New York fallback)
-    /// -1, 0, +1, +2, +3 -> SF Padrão
-    /// +4 e +5 -> Comic Sans
+    /// Resolve a tipografia combinando Tom (-5..+5), Domínio (-5..+5: tamanho e espessura),
+    /// Calor (SnowtopCaps em <= -2) e contexto felino (CatsFont), além de opacidade suave para Volume negativo.
+    /// Regra de família:
+    /// - Contexto felino -> CatsFont (temático)
+    /// - Disputa entre SnowtopCaps (Calor <= -2) e Tom estilizado (-5..-2 ou +4..+5): vence maior |nota|; empate determinístico por `tieBreakSeed`.
+    /// - Tom: -5/-4 Times New Roman, -3/-2 Serif, -1..+3 SF Mono, +4/+5 Comic Sans.
     func resolveTypography(
         tomScore: Int,
         volumeScore: Int,
         dominioScore: Int,
         calorScore: Int = 0,
         felineContext: Bool = false,
-        baseSize: CGFloat = 34.0
+        baseSize: CGFloat = 34.0,
+        tieBreakSeed: Int = 0
     ) -> ResolvedTypography {
         registerAllBundledFonts()
 
-        let size = fontSize(forDominio: dominioScore, baseSize: baseSize)
+        let clampedDominio = max(-5, min(5, dominioScore))
+        let size = fontSize(forDominio: clampedDominio, baseSize: baseSize)
         let clampedTom = max(-5, min(5, tomScore))
         let clampedVol = max(-5, min(5, volumeScore))
+        let clampedCalor = max(-5, min(5, calorScore))
 
-        let swiftUIWeight = swiftUIFontWeight(forVolume: clampedVol)
-        let weightName = weightDescription(forVolume: clampedVol)
+        // Espessura migrada de Volume para Domínio.
+        let swiftUIWeight = swiftUIFontWeight(forDominio: clampedDominio)
+        let weightName = weightDescription(forDominio: clampedDominio)
 
-        // Sussurro (-5..-1) e Grito (+2..+5) para reforço visual contínuo nos 11 degraus
+        // Sussurro (-5..-1) atenua levemente a opacidade sem competir com a espessura de Domínio.
         let whisperOpacity: Double = {
             switch clampedVol {
             case -5: return 0.42
@@ -123,8 +127,7 @@ final class FontRegistrationManager {
             }
         }()
 
-        // A tipografia temática do gato tem precedência sobre a fonte fria se
-        // a mesma palavra também estiver marcada com Calor negativo.
+        // Fontes ilustradas (CatsFont e SnowtopCaps) não recebem extraStroke artificial para preservar o desenho.
         if felineContext {
             let catsFont = UIFont(name: "CatsFont-Regular", size: size) != nil
                 ? Font.custom("CatsFont-Regular", fixedSize: size)
@@ -134,14 +137,25 @@ final class FontRegistrationManager {
                 fontSize: size,
                 familyName: "Cats Font",
                 weightLabel: weightName,
-                extraStrokeWidth: extraStrokeForTwoWeightFont(volume: clampedVol, fontSize: size),
-                whisperOpacityMultiplier: whisperOpacity
+                extraStrokeWidth: 0.0,
+                whisperOpacityMultiplier: whisperOpacity,
+                isDecorativeSingleWeight: true
             )
         }
 
-        // A fonte Snowtop Caps marca frio explícito (frio/gelo), preservando a fonte
-        // atual para o nível -1, que representa apenas uma sensação fresca.
-        if calorScore <= -2 {
+        let tomHasStyledFamily = (clampedTom <= -2 || clampedTom >= 4)
+        let snowtopEligible = clampedCalor <= -2
+        let useSnowtopCaps: Bool = {
+            guard snowtopEligible else { return false }
+            guard tomHasStyledFamily else { return true }
+            let calorMag = abs(clampedCalor)
+            let tomMag = abs(clampedTom)
+            if calorMag != tomMag { return calorMag > tomMag }
+            // Empate exato resolvido deterministicamente pelo seed da palavra.
+            return (tieBreakSeed & 1) == 0
+        }()
+
+        if useSnowtopCaps {
             let snowtopCaps = UIFont(name: "SnowtopCaps", size: size) != nil
                 ? Font.custom("SnowtopCaps", fixedSize: size)
                 : .system(size: size, weight: swiftUIWeight, design: .rounded)
@@ -150,16 +164,17 @@ final class FontRegistrationManager {
                 fontSize: size,
                 familyName: "Snowtop Caps",
                 weightLabel: weightName,
-                extraStrokeWidth: extraStrokeForTwoWeightFont(volume: clampedVol, fontSize: size),
-                whisperOpacityMultiplier: whisperOpacity
+                extraStrokeWidth: 0.0,
+                whisperOpacityMultiplier: whisperOpacity,
+                isDecorativeSingleWeight: true
             )
         }
 
         // 1. Tom -5 ou -4: Times New Roman
         if clampedTom <= -4 {
-            let isBold = clampedVol >= 2
+            let isBold = clampedDominio >= 2
             let psName = isBold ? "TimesNewRomanPS-BoldMT" : "TimesNewRomanPSMT"
-            let extraStroke = extraStrokeForTwoWeightFont(volume: clampedVol, fontSize: size)
+            let extraStroke = extraStrokeForTwoWeightFont(dominio: clampedDominio, fontSize: size)
             let chosenFont: Font = UIFont(name: psName, size: size) != nil
                 ? .custom(psName, fixedSize: size)
                 : .system(size: size, weight: swiftUIWeight, design: .serif)
@@ -170,14 +185,15 @@ final class FontRegistrationManager {
                 familyName: "Times New Roman",
                 weightLabel: weightName,
                 extraStrokeWidth: extraStroke,
-                whisperOpacityMultiplier: whisperOpacity
+                whisperOpacityMultiplier: whisperOpacity,
+                isDecorativeSingleWeight: false
             )
         }
 
         // 2. Tom -3 ou -2: Serif (família Serrif incluída nos assets com 7 pesos reais!)
         if clampedTom == -3 || clampedTom == -2 {
-            let serrifPS = serrifPostScriptName(forVolume: clampedVol)
-            let extraStroke: CGFloat = clampedVol == 5 ? max(0.8, size * 0.024) : 0.0
+            let serrifPS = serrifPostScriptName(forDominio: clampedDominio)
+            let extraStroke: CGFloat = clampedDominio == 5 ? max(0.8, size * 0.024) : 0.0
             let chosenFont: Font = UIFont(name: serrifPS, size: size) != nil
                 ? .custom(serrifPS, fixedSize: size)
                 : .system(size: size, weight: swiftUIWeight, design: .serif)
@@ -188,15 +204,16 @@ final class FontRegistrationManager {
                 familyName: "Serif",
                 weightLabel: weightName,
                 extraStrokeWidth: extraStroke,
-                whisperOpacityMultiplier: whisperOpacity
+                whisperOpacityMultiplier: whisperOpacity,
+                isDecorativeSingleWeight: false
             )
         }
 
         // 3. Tom +4 ou +5: Comic Sans
         if clampedTom >= 4 {
-            let isBold = clampedVol >= 2
+            let isBold = clampedDominio >= 2
             let psName = isBold ? "ComicSansMS-Bold" : "ComicSansMS"
-            let extraStroke = extraStrokeForTwoWeightFont(volume: clampedVol, fontSize: size)
+            let extraStroke = extraStrokeForTwoWeightFont(dominio: clampedDominio, fontSize: size)
             let chosenFont: Font = UIFont(name: psName, size: size) != nil
                 ? .custom(psName, fixedSize: size)
                 : .system(size: size, weight: swiftUIWeight, design: .rounded)
@@ -207,24 +224,26 @@ final class FontRegistrationManager {
                 familyName: "Comic Sans",
                 weightLabel: weightName,
                 extraStrokeWidth: extraStroke,
-                whisperOpacityMultiplier: whisperOpacity
+                whisperOpacityMultiplier: whisperOpacity,
+                isDecorativeSingleWeight: false
             )
         }
 
-        // 4. Outros valores (-1, 0, +1, +2, +3): SF Padrão
-        let extraStroke: CGFloat = clampedVol == 5 ? max(0.6, size * 0.018) : 0.0
+        // 4. Outros valores (-1, 0, +1, +2, +3): SF Padrão (monospaced)
+        let extraStroke: CGFloat = clampedDominio == 5 ? max(0.6, size * 0.018) : 0.0
         return ResolvedTypography(
             font: .system(size: size, weight: swiftUIWeight, design: .monospaced),
             fontSize: size,
             familyName: "SF Padrão",
             weightLabel: weightName,
             extraStrokeWidth: extraStroke,
-            whisperOpacityMultiplier: whisperOpacity
+            whisperOpacityMultiplier: whisperOpacity,
+            isDecorativeSingleWeight: false
         )
     }
 
-    private func serrifPostScriptName(forVolume volume: Int) -> String {
-        switch volume {
+    private func serrifPostScriptName(forDominio dominio: Int) -> String {
+        switch dominio {
         case -5, -4:
             return "Serrif-TRIAL-Thin"
         case -3, -2:
@@ -244,8 +263,8 @@ final class FontRegistrationManager {
         }
     }
 
-    private func extraStrokeForTwoWeightFont(volume: Int, fontSize: CGFloat) -> CGFloat {
-        switch volume {
+    private func extraStrokeForTwoWeightFont(dominio: Int, fontSize: CGFloat) -> CGFloat {
+        switch dominio {
         case 1: return max(0.35, fontSize * 0.012)
         case 2: return 0.0 // Transição para Bold nativo
         case 3: return max(0.55, fontSize * 0.018)
@@ -255,8 +274,8 @@ final class FontRegistrationManager {
         }
     }
 
-    func swiftUIFontWeight(forVolume volume: Int) -> Font.Weight {
-        switch volume {
+    func swiftUIFontWeight(forDominio dominio: Int) -> Font.Weight {
+        switch dominio {
         case -5: return .ultraLight
         case -4: return .thin
         case -3: return .light
@@ -272,8 +291,8 @@ final class FontRegistrationManager {
         }
     }
 
-    func weightDescription(forVolume volume: Int) -> String {
-        switch volume {
+    func weightDescription(forDominio dominio: Int) -> String {
+        switch dominio {
         case -5: return "UltraLight (-5)"
         case -4: return "Thin (-4)"
         case -3: return "Light (-3)"

@@ -2,7 +2,7 @@
 //  MorphParameters.swift
 //  teste_animacao
 //
-//  Definições dos 13 parâmetros semânticos ativos do Morph (ignorando Valência e Regularidade),
+//  Definições dos 14 parâmetros semânticos ativos do Morph (incluindo Valência; ignorando Regularidade),
 //  suas escalas discretas (-5..+5 ou 0..+5), âncoras semânticas e consequências visuais.
 //
 
@@ -17,9 +17,9 @@ enum ModificationScope: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-// MARK: - Os 13 Parâmetros Semânticos Ativos (PDF animacoes_parametros_Morph)
+// MARK: - Os 14 Parâmetros Semânticos Ativos do Morph
 
-enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
+enum MorphParameter: String, CaseIterable, Identifiable, Hashable, Sendable {
     case fragmentacao = "Fragmentação"
     case ativacao = "Ativação"
     case dominio = "Domínio"
@@ -33,6 +33,7 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
     case tom = "Tom"
     case peso = "Peso"
     case fluidez = "Fluidez"
+    case valencia = "Valência"
 
     var id: String { rawValue }
 
@@ -52,12 +53,13 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
         case .tom: return "tom"
         case .peso: return "peso"
         case .fluidez: return "fluidez"
+        case .valencia: return "valencia"
         }
     }
 
     var category: String {
         switch self {
-        case .ativacao, .dominio:
+        case .valencia, .ativacao, .dominio:
             return "1. Afeto"
         case .volume, .tom, .peso, .fluidez:
             return "2. Movimento e Voz"
@@ -85,6 +87,7 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
         case .tom: return "textformat"
         case .peso: return "scalemass.fill"
         case .fluidez: return "water.waves"
+        case .valencia: return "theatermasks.fill"
         }
     }
 
@@ -110,11 +113,11 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
         case .tom: return .mint
         case .peso: return .blue
         case .fluidez: return Color(red: 0.25, green: 0.72, blue: 0.96)
+        case .valencia: return Color(red: 0.94, green: 0.28, blue: 0.58)
         }
     }
 
-    /// Escala definida no PDF de parâmetros:
-    /// Distância e Fragmentação são unipolares (0 a +5); os demais 11 são bipolares (-5 a +5).
+    /// Distância e Fragmentação são unipolares (0 a +5); os demais 12 são bipolares (-5 a +5).
     var isUnipolar: Bool {
         switch self {
         case .fragmentacao, .distancia:
@@ -155,6 +158,7 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
         case .tom: return "grave/sério (-5) ↔ lúdico/piada (+5)"
         case .peso: return "leve (-5) ↔ pesado (+5)"
         case .fluidez: return "rígido (-5) ↔ fluido (+5)"
+        case .valencia: return "negativo (-5) ↔ positivo (+5)"
         }
     }
 
@@ -186,37 +190,41 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
             return "Tamanho ou peso das imagens e da sensação."
         case .fluidez:
             return "Qualidade do movimento ou da matéria, do rígido ao líquido e contínuo."
+        case .valencia:
+            return "Se o que o texto expressa é bom ou ruim para quem vive a cena."
         }
     }
 
     var consequenceDescription: String {
         switch self {
         case .fragmentacao:
-            return "Fade com efeito de granulação entrando e saindo."
+            return "Corte, rachadura, despedaçar, cisão, corrosão e desintegração granulada."
         case .ativacao:
-            return "Deixa a animação mais rápida (+) ou mais lenta (-)."
+            return "Entradas/pulos energéticos (+) e multiplicador de velocidade (- lento ↔ + rápido)."
         case .dominio:
-            return "Muda o tamanho da fonte (menor em -5, maior em +5)."
+            return "Muda o tamanho e a espessura da fonte (-5 pequeno/fino ↔ +5 grande/grosso) e lente inflada (+)."
         case .tensao:
-            return "Faz a palavra vibrar conforme o suspense aumenta."
+            return "Tremor, onda sísmica, pressão e glitch em (+); sem animação própria em (-)."
         case .andamento:
-            return "Duração da palavra surgindo e indo embora da tela (a partir de +1; 0 e negativos mantêm parada)."
+            return "Letargia em (-); entradas velozes Speed Dash e Roll In em (+)."
         case .calor:
-            return "Muda a cor: frio (azul escuro, azul, lilás) ↔ quente (laranja, vermelho)."
+            return "Frio/gelo/nevasca em (-) ↔ fogo/fumaça/miragem/foguete em (+)."
         case .luz:
-            return "Luz (palavra brilhando em +) / criar sombra escura para a letra (-)."
+            return "Escurecimento em (-) ↔ brilho, neon e flicker em (+)."
         case .abertura:
-            return "Muda o espaçamento entre as letras (comprimido ↔ aberto)."
+            return "Condensado/contraído em (-) ↔ estirado, espaçado e pingentes no vento em (+)."
         case .distancia:
-            return "Muda o espaçamento entre as palavras."
+            return "Engrenagem de relógio, arrasto temporal, visão dupla e espaçamento entre palavras."
         case .volume:
-            return "Muda o peso/espessura da fonte (fino no sussurro ↔ grosso no grito)."
+            return "Contorno vazado no silêncio (-) ↔ ecos, panorâmica 3D e grito explosivo/berro em (+)."
         case .tom:
             return "Altera a fonte: -5/-4 Times New Roman, -3/-2 Serif, -1..+3 SF Padrão, +4/+5 Comic Sans."
         case .peso:
-            return "Leve (-): palavra flutua para o topo / Pesado (+): palavra afunda para a base."
+            return "Leve (-): flutuação zero-G e elevação ↔ Pesado (+): queda, esmagar e afundar."
         case .fluidez:
-            return "Ondulação da letra horizontalmente e verticalmente (a partir de +1; 0 e negativos mantêm parada)."
+            return "Rígido/metálico em (-) ↔ ondas, água, viscoso e derretido em (+)."
+        case .valencia:
+            return "Efeitos cromáticos e ópticos divididos entre emoção negativa (-) e positiva (+)."
         }
     }
 
@@ -235,6 +243,7 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
         case .tom: return "Essa cerimônia solene virou uma piada absurda"
         case .peso: return "A pluma leve flutuou enquanto o chumbo afundou"
         case .fluidez: return "A água desliza em ondas suaves pelo rio"
+        case .valencia: return "Um desespero terrível virou uma alegria radiante"
         }
     }
 
@@ -413,17 +422,32 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
             }
         case .fluidez:
             switch clamped {
-            case -5: return "-5: Petrificado (Parado — escala negativa a definir)"
-            case -4: return "-4: Cortante, engessado (Parado — escala negativa a definir)"
-            case -3: return "-3: Travado, mecânico (Parado — escala negativa a definir)"
-            case -2: return "-2: Seco (Parado — escala negativa a definir)"
-            case -1: return "-1: Duro (Parado — escala negativa a definir)"
-            case 0: return "0: Neutro (Frase completamente parada)"
+            case -5: return "-5: Petrificado (Rigidez / Metálico)"
+            case -4: return "-4: Cortante, engessado"
+            case -3: return "-3: Travado, mecânico"
+            case -2: return "-2: Seco"
+            case -1: return "-1: Duro"
+            case 0: return "0: Neutro"
             case 1: return "+1: Suave"
             case 2: return "+2: Maleável"
             case 3: return "+3: Escorrer, ondular"
             case 4: return "+4: Correnteza"
             case 5: return "+5: Líquido, torrente"
+            default: return "\(clamped)"
+            }
+        case .valencia:
+            switch clamped {
+            case -5: return "-5: Desespero, horror, fúria"
+            case -4: return "-4: Dor intensa, angústia"
+            case -3: return "-3: Tristeza, medo"
+            case -2: return "-2: Desânimo, mal-estar"
+            case -1: return "-1: Incômodo leve"
+            case 0: return "0: Neutro"
+            case 1: return "+1: Contentamento leve"
+            case 2: return "+2: Paz, bem-estar"
+            case 3: return "+3: Alegria, carinho"
+            case 4: return "+4: Euforia, entusiasmo"
+            case 5: return "+5: Êxtase"
             default: return "\(clamped)"
             }
         }
@@ -437,9 +461,9 @@ enum MorphParameter: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-// MARK: - Armazenamento de Notas dos 13 Parâmetros
+// MARK: - Armazenamento de Notas dos 14 Parâmetros
 
-struct ParameterScores: Equatable {
+struct ParameterScores: Equatable, Sendable {
     private var values: [MorphParameter: Int] = [:]
 
     init() {

@@ -21,10 +21,11 @@ struct TextView: View {
     @State private var focusRequestID: Int = 0
 
     @State private var stageReferenceDate: Date = .now
-    @State private var stageScrollOffset: CGFloat = 0
-    @State private var stageDragStartOffset: CGFloat? = nil
-    @State private var stageContentHeight: CGFloat = 0
+    @State private var phraseSeed: Int = 1
     @State private var cachedWordScores: [ParameterScores] = []
+    @State private var cachedWordPlans: [WordAnimationPlan] = []
+    @State private var cachedWordSpacings: [CGFloat] = []
+    @State private var cachedLayoutKey: Int = 0
     @State private var tarefaInterpretacao: Task<Void, Never>?
 
     private var trimmedText: String {
@@ -173,64 +174,31 @@ struct TextView: View {
             .animation(.easeInOut(duration: 0.18), value: scrollController.metrics.needsScroll)
         } else {
             GeometryReader { geo in
-                let maxScroll = max(0, stageContentHeight - geo.size.height)
-                let clampedOffset = min(maxScroll, max(0, stageScrollOffset))
+                let plans = activeStagePlans
+                let spacings = cachedWordSpacings.count == plans.count
+                    ? cachedWordSpacings
+                    : MorphWordsCanvasView.computeWordSpacings(plans: plans)
+                let layoutKey = cachedWordPlans.count == plans.count
+                    ? cachedLayoutKey
+                    : MorphWordsCanvasView.computeLayoutKey(plans: plans)
 
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
-                    let elapsed = context.date.timeIntervalSince(stageReferenceDate)
-
-                    // Contêiner rolável 100% SwiftUI (evita UIScrollView dentro de .compositingGroup().layerEffect)
-                    ZStack(alignment: .top) {
-                        Color.clear
-
-                        VStack(spacing: 24) {
-                            Spacer(minLength: max(24, geo.size.height * 0.14))
-
-                            MorphWordsCanvasView(
-                                tokens: wordTokens,
-                                scope: .wholePhrase,
-                                selectedWordIndex: .constant(0),
-                                elapsedTime: elapsed,
-                                isAndamentoPaused: false,
-                                isolatedParameter: nil,
-                                onWhiteCanvas: true,
-                                onWordTap: { _ in voltarParaEdicao() },
-                                scoresProvider: { idx in effectiveScores(for: idx) }
-                            )
-                            .padding(.horizontal, 28)
-                            .padding(.vertical, 60)
-                            .frame(maxWidth: .infinity, minHeight: geo.size.height * 0.45)
-
-                            Spacer(minLength: 40)
-                        }
-                        .frame(minHeight: geo.size.height)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                            if abs(stageContentHeight - height) > 0.5 {
-                                stageContentHeight = height
-                            }
-                        }
-                        .offset(y: -clampedOffset)
-                    }
-                    .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-                    .clipped()
-                    .crtHitAdjusted()
-                    .onTapGesture { voltarParaEdicao() }
-                    .gesture(
-                        DragGesture(minimumDistance: 10)
-                            .onChanged { value in
-                                guard maxScroll > 0 else { return }
-                                if stageDragStartOffset == nil {
-                                    stageDragStartOffset = clampedOffset
-                                }
-                                let base = stageDragStartOffset ?? 0
-                                stageScrollOffset = min(maxScroll, max(0, base - value.translation.height))
-                            }
-                            .onEnded { _ in
-                                stageDragStartOffset = nil
-                            }
+                MorphStageScrollContainer(
+                    viewportSize: geo.size,
+                    resetTrigger: stageReferenceDate,
+                    onTap: voltarParaEdicao,
+                    content: MorphWordsCanvasView(
+                        plans: plans,
+                        wordSpacings: spacings,
+                        layoutKey: layoutKey,
+                        scope: .wholePhrase,
+                        selectedWordIndex: 0,
+                        stageReferenceDate: stageReferenceDate,
+                        isAndamentoPaused: false,
+                        onWhiteCanvas: true,
+                        maxAvailableWidth: max(180, geo.size.width - 56)
                     )
-                }
+                    .equatable()
+                )
             }
         }
     }
@@ -337,12 +305,30 @@ struct TextView: View {
         executarInterpretacao(repeticoes: 1)
     }
 
-    private func recomputarScoresPorPalavra() {
-        cachedWordScores = interpretador.wordParameterScores(tokens: wordTokens, filtros: filtros)
+    private var activeStagePlans: [WordAnimationPlan] {
+        let tokens = wordTokens
+        if cachedWordPlans.count == tokens.count {
+            return cachedWordPlans
+        }
+        return WordEffectResolver.resolvePhrase(
+            tokens: tokens,
+            scoresPerWord: Array(repeating: activeScores, count: tokens.count),
+            phraseSeed: phraseSeed
+        )
     }
 
-    private func effectiveScores(for wordIndex: Int) -> ParameterScores {
-        (wordIndex >= 0 && wordIndex < cachedWordScores.count) ? cachedWordScores[wordIndex] : activeScores
+    private func recomputarScoresPorPalavra() {
+        let tokens = wordTokens
+        let scores = interpretador.wordParameterScores(tokens: tokens, filtros: filtros)
+        let plans = WordEffectResolver.resolvePhrase(
+            tokens: tokens,
+            scoresPerWord: scores,
+            phraseSeed: phraseSeed
+        )
+        cachedWordScores = scores
+        cachedWordPlans = plans
+        cachedWordSpacings = MorphWordsCanvasView.computeWordSpacings(plans: plans)
+        cachedLayoutKey = MorphWordsCanvasView.computeLayoutKey(plans: plans)
     }
 
     private func selecionarExemplo(_ novoTexto: String) {
@@ -368,13 +354,78 @@ struct TextView: View {
             )
             await MainActor.run {
                 if !interpretador.lote.isEmpty && !isDismissingScreen {
+                    // Opção A: gera novo seed 1x por interpretação concluída e congela os planos fora dos 60fps.
+                    phraseSeed = Int.random(in: 1...Int.max)
+                    recomputarScoresPorPalavra()
                     stageReferenceDate = .now
-                    stageScrollOffset = 0
                     withAnimation(.easeInOut(duration: 0.25)) {
                         isEditingText = false
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Contêiner de Scroll Isolado (Mudanças de Scroll NÃO Reavaliam TextView nem MorphWordsCanvasView)
+
+private struct MorphStageScrollContainer<Content: View>: View {
+    let viewportSize: CGSize
+    let resetTrigger: Date
+    let onTap: () -> Void
+    let content: Content
+
+    @State private var scrollOffset: CGFloat = 0
+    @State private var dragStartOffset: CGFloat? = nil
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        let maxScroll = max(0, contentHeight - viewportSize.height)
+        let clampedOffset = min(maxScroll, max(0, scrollOffset))
+
+        ZStack(alignment: .top) {
+            Color.clear
+
+            VStack(spacing: 24) {
+                Spacer(minLength: max(24, viewportSize.height * 0.14))
+
+                content
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 60)
+                    .frame(maxWidth: .infinity, minHeight: viewportSize.height * 0.45)
+
+                Spacer(minLength: 40)
+            }
+            .frame(minHeight: viewportSize.height)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                if abs(contentHeight - height) > 0.5 {
+                    contentHeight = height
+                }
+            }
+            .offset(y: -clampedOffset)
+        }
+        .frame(width: viewportSize.width, height: viewportSize.height, alignment: .top)
+        .clipped()
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in
+                    guard maxScroll > 0 else { return }
+                    if dragStartOffset == nil {
+                        dragStartOffset = clampedOffset
+                    }
+                    let base = dragStartOffset ?? 0
+                    scrollOffset = min(maxScroll, max(0, base - value.translation.height))
+                }
+                .onEnded { _ in
+                    dragStartOffset = nil
+                }
+        )
+        .onChange(of: resetTrigger) { _, _ in
+            scrollOffset = 0
+            dragStartOffset = nil
         }
     }
 }
