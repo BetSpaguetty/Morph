@@ -96,6 +96,7 @@ struct RetroHeaderBar: View {
     var onHome: () -> Void
     var onSettings: () -> Void
     var onSave: () -> Void
+    var isSaved: Bool = false
     var onTapEmptySpace: (() -> Void)? = nil
 
     private var iconSize: CGFloat { 20 * metrics.headerScale }
@@ -106,7 +107,12 @@ struct RetroHeaderBar: View {
             HStack(spacing: 4 * metrics.headerScale) {
                 headerIconButton(systemName: "house", label: "Início", action: onHome)
                 headerIconButton(systemName: "gearshape", label: "Ajustes", action: onSettings)
-                headerAssetButton(assetName: "botao_salvar", label: "Salvar", action: onSave)
+                //headerAssetButton(assetName: "botao_salvar", label: "Salvar", action: onSave)
+                headerIconButton(
+                    systemName: isSaved ? "square.and.arrow.down.badge.checkmark" : "square.and.arrow.down",
+                    label: isSaved ? "Salvo" : "Salvar",
+                    action: onSave
+                )
             }
 
             Color.clear
