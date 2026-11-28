@@ -4,6 +4,11 @@ struct FilesView: View {
     @Environment(MorphRouter.self) private var router
     @Environment(SavedFilesStore.self) private var savedFilesStore
 
+    @State private var scrollOffset: CGFloat = 0
+    @State private var dragStartOffset: CGFloat? = nil
+    @State private var viewportHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+
     var body: some View {
         GeometryReader { geometry in
             let metrics = RetroFrameMetrics(containerSize: geometry.size)
@@ -31,6 +36,11 @@ struct FilesView: View {
             .padding(.horizontal, metrics.horizontalOuterPadding)
             .padding(.vertical, metrics.verticalOuterPadding)
         }
+        .onAppear {
+            savedFilesStore.reload()
+            scrollOffset = 0
+            dragStartOffset = nil
+        }
     }
 
     private func header(metrics: RetroFrameMetrics) -> some View {
@@ -54,7 +64,7 @@ struct FilesView: View {
             .accessibilityLabel("Voltar ao início")
 
             Text("SAVED")
-                .font(FontRegistrationManager.chicago(size: 32 * scale).bold()) //16
+                .font(FontRegistrationManager.chicago(size: 32 * scale).bold())
                 .tracking(1.2 * scale)
                 .foregroundStyle(RetroTerminalStyle.ink)
 
@@ -72,7 +82,10 @@ struct FilesView: View {
     }
 
     private func savedFilesList(metrics: RetroFrameMetrics) -> some View {
-        VStack(spacing: 0) {
+        let maxScroll = max(0, contentHeight - viewportHeight)
+        let clampedOffset = min(maxScroll, max(0, scrollOffset))
+
+        return VStack(spacing: 0) {
             HStack {
                 Text("Name")
                     .font(FontRegistrationManager.chicago(size: 24 * metrics.headerScale).bold())
@@ -86,38 +99,57 @@ struct FilesView: View {
 
             separator
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(savedFilesStore.files) { file in
-                        Button {
-                            router.push(.editor(fileID: file.id))
-                        } label: {
-                            HStack {
-                                Text(file.name)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer(minLength: 12 * metrics.headerScale)
-                                Text(dateLabel(for: file.savedAt))
-                                    .monospacedDigit()
-                            }
-                            .font(FontRegistrationManager.chicago(size: 13 * metrics.headerScale))
-                            .foregroundStyle(RetroTerminalStyle.ink)
-                            .padding(.horizontal, 6 * metrics.headerScale)
-                            .padding(.vertical, 9 * metrics.headerScale)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .crtHitAdjusted()
+            ZStack(alignment: .top) {
+                Color.clear
 
-                        separator
+                VStack(spacing: 0) {
+                    if savedFilesStore.files.isEmpty {
+                        Text("No saved files found")
+                            .font(FontRegistrationManager.chicago(size: 13 * metrics.headerScale))
+                            .foregroundStyle(RetroTerminalStyle.ink.opacity(0.75))
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal, 6 * metrics.headerScale)
+                    } else {
+                        ForEach(savedFilesStore.files) { file in
+                            SavedFileRow(file: file, scale: metrics.headerScale) {
+                                router.push(.editor(fileID: file.id))
+                            }
+                        }
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if abs(contentHeight - height) > 0.5 {
+                        contentHeight = height
+                    }
+                }
+                .offset(y: -clampedOffset)
             }
-            .scrollIndicators(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                if abs(viewportHeight - height) > 0.5 {
+                    viewportHeight = height
+                }
+            }
+            .clipped()
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        guard maxScroll > 0 else { return }
+                        if dragStartOffset == nil {
+                            dragStartOffset = clampedOffset
+                        }
+                        let base = dragStartOffset ?? 0
+                        scrollOffset = min(maxScroll, max(0, base - value.translation.height))
+                    }
+                    .onEnded { _ in
+                        dragStartOffset = nil
+                    }
+            )
         }
         .padding(.horizontal, metrics.headerContentInsetX)
-        //.padding(.top, metrics.headerHeight + 0 * metrics.headerScale)
-        .padding(.top, metrics.headerHeight)
+        .padding(.top, 14 * metrics.headerScale)
         .padding(.bottom, 18 * metrics.headerScale)
     }
 
@@ -126,12 +158,46 @@ struct FilesView: View {
             .fill(RetroTerminalStyle.ink.opacity(0.48))
             .frame(height: 1.5)
     }
+}
 
-    private func dateLabel(for date: Date) -> String {
+/// Linha selecionável que representa um arquivo persistido no aplicativo.
+private struct SavedFileRow: View {
+    let file: SavedMorphFile
+    let scale: CGFloat
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(file.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 12 * scale)
+                    Text(dateLabel)
+                        .monospacedDigit()
+                }
+                .font(FontRegistrationManager.chicago(size: 16 * scale))
+                .foregroundStyle(RetroTerminalStyle.ink)
+                .padding(.horizontal, 6 * scale)
+                .padding(.vertical, 10 * scale)
+                .contentShape(Rectangle())
+
+                Rectangle()
+                    .fill(RetroTerminalStyle.ink.opacity(0.48))
+                    .frame(height: 1.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .crtHitAdjusted()
+        .accessibilityLabel("\(file.name), salvo em \(dateLabel)")
+    }
+
+    private var dateLabel: String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "pt_BR")
         formatter.dateFormat = "dd/MM"
-        return formatter.string(from: date)
+        return formatter.string(from: file.savedAt)
     }
 }
 
