@@ -42,9 +42,8 @@ struct FilesView: View {
             Button {
                 router.popToRoot()
             } label: {
-                Image("botao_voltar")
-                    .resizable()
-                    .scaledToFit()
+                Image(systemName: "arrow.backward.circle")
+                    .font(.system(size: iconSize, weight: .semibold))
                     .frame(width: iconSize, height: iconSize)
                     .padding(.horizontal, buttonPadX)
                     .frame(height: metrics.headerHeight)
@@ -55,7 +54,7 @@ struct FilesView: View {
             .accessibilityLabel("Voltar ao início")
 
             Text("SAVED")
-                .font(FontRegistrationManager.chicago(size: 16 * scale).bold())
+                .font(FontRegistrationManager.chicago(size: 32 * scale).bold()) //16
                 .tracking(1.2 * scale)
                 .foregroundStyle(RetroTerminalStyle.ink)
 
@@ -69,20 +68,21 @@ struct FilesView: View {
         .padding(.leading, max(0, metrics.headerContentInsetX - buttonPadX))
         .padding(.trailing, metrics.headerContentInsetX)
         .frame(height: metrics.headerHeight)
+        .padding(.top, 20 * metrics.headerScale)
     }
 
     private func savedFilesList(metrics: RetroFrameMetrics) -> some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Name")
-                    .font(FontRegistrationManager.chicago(size: 14 * metrics.headerScale).bold())
+                    .font(FontRegistrationManager.chicago(size: 24 * metrics.headerScale).bold())
                 Spacer()
                 Text("date")
-                    .font(FontRegistrationManager.chicago(size: 14 * metrics.headerScale).bold())
+                    .font(FontRegistrationManager.chicago(size: 24 * metrics.headerScale).bold())
             }
             .foregroundStyle(RetroTerminalStyle.ink)
             .padding(.horizontal, 6 * metrics.headerScale)
-            .padding(.bottom, 8 * metrics.headerScale)
+            .padding(.bottom, 10 * metrics.headerScale)
 
             separator
 
@@ -116,7 +116,8 @@ struct FilesView: View {
             .scrollIndicators(.hidden)
         }
         .padding(.horizontal, metrics.headerContentInsetX)
-        .padding(.top, metrics.headerHeight + 10 * metrics.headerScale)
+        //.padding(.top, metrics.headerHeight + 0 * metrics.headerScale)
+        .padding(.top, metrics.headerHeight)
         .padding(.bottom, 18 * metrics.headerScale)
     }
 

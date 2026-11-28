@@ -34,6 +34,7 @@ struct TextView: View {
     @State private var cachedLayoutKey: Int = 0
     @State private var tarefaInterpretacao: Task<Void, Never>?
     @State private var activeSavedFileID: UUID?
+    @State private var savedTextSnapshot: String?
     @State private var saveAlertMessage: String?
 
     private var trimmedText: String {
@@ -80,6 +81,7 @@ struct TextView: View {
                     onHome: sairParaInicio,
                     onSettings: abrirConfiguracoes,
                     onSave: salvarArquivo,
+                    isSaved: activeSavedFileID != nil && savedTextSnapshot == texto,
                     onTapEmptySpace: { scrollController.resignFocus() }
                 )
                 .zIndex(1)
@@ -307,6 +309,7 @@ struct TextView: View {
         do {
             let file = try savedFilesStore.save(texto, updating: activeSavedFileID)
             activeSavedFileID = file.id
+            savedTextSnapshot = texto
             saveAlertMessage = "\(file.name) salvo."
         } catch {
             saveAlertMessage = "Não foi possível salvar o arquivo: \(error.localizedDescription)"
@@ -317,6 +320,7 @@ struct TextView: View {
         guard let activeSavedFileID else { return }
         do {
             texto = try savedFilesStore.content(for: activeSavedFileID)
+            savedTextSnapshot = texto
         } catch {
             saveAlertMessage = "Não foi possível abrir o arquivo: \(error.localizedDescription)"
         }
