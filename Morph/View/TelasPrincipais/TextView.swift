@@ -5,6 +5,11 @@ struct TextView: View {
     @Environment(CRTBarrelConfig.self) private var crtConfig
     @Environment(MorphKeyboardVisualConfig.self) private var keyboardConfig
     @Environment(CRTTextInputBridge.self) private var textInputBridge
+    @Environment(SavedFilesStore.self) private var savedFilesStore
+
+    init(fileID: UUID? = nil) {
+        _activeSavedFileID = State(initialValue: fileID)
+    }
 
     @State private var interpretador = Interpretador()
     @State private var scrollController = RetroScrollController()
@@ -28,6 +33,8 @@ struct TextView: View {
     @State private var cachedWordSpacings: [CGFloat] = []
     @State private var cachedLayoutKey: Int = 0
     @State private var tarefaInterpretacao: Task<Void, Never>?
+    @State private var activeSavedFileID: UUID?
+    @State private var saveAlertMessage: String?
 
     private var trimmedText: String {
         texto.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -72,6 +79,7 @@ struct TextView: View {
                     metrics: metrics,
                     onHome: sairParaInicio,
                     onSettings: abrirConfiguracoes,
+                    onSave: salvarArquivo,
                     onTapEmptySpace: { scrollController.resignFocus() }
                 )
                 .zIndex(1)
@@ -113,7 +121,10 @@ struct TextView: View {
             )
             .padding(.horizontal, metrics.horizontalOuterPadding)
             .padding(.vertical, metrics.verticalOuterPadding)
-            .onAppear { syncTextInputSession(metrics: metrics) }
+            .onAppear {
+                carregarArquivoSeNecessario()
+                syncTextInputSession(metrics: metrics)
+            }
             .onChange(of: metrics) { _, newMetrics in syncTextInputSession(metrics: newMetrics) }
             .onChange(of: isShowingEditor) { _, _ in syncTextInputSession(metrics: metrics) }
             .onChange(of: scrollController.isFocused) { _, _ in syncTextInputSession(metrics: metrics) }
@@ -140,6 +151,14 @@ struct TextView: View {
                 onTriggerRun: { reps in executarInterpretacao(repeticoes: reps) },
                 onSelectExample: { novoTexto in selecionarExemplo(novoTexto) }
             )
+        }
+        .alert("Arquivo", isPresented: Binding(
+            get: { saveAlertMessage != nil },
+            set: { if !$0 { saveAlertMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveAlertMessage = nil }
+        } message: {
+            Text(saveAlertMessage ?? "")
         }
         .onChange(of: texto) { _, _ in recomputarScoresPorPalavra() }
         .onChange(of: interpretador.lote.count) { _, _ in recomputarScoresPorPalavra() }
@@ -277,6 +296,30 @@ struct TextView: View {
         scrollController.resignFocus()
         textInputBridge.session = nil
         router.pop()
+    }
+
+    private func salvarArquivo() {
+        guard hasText else {
+            saveAlertMessage = "Digite um texto antes de salvar."
+            return
+        }
+
+        do {
+            let file = try savedFilesStore.save(texto, updating: activeSavedFileID)
+            activeSavedFileID = file.id
+            saveAlertMessage = "\(file.name) salvo."
+        } catch {
+            saveAlertMessage = "Não foi possível salvar o arquivo: \(error.localizedDescription)"
+        }
+    }
+
+    private func carregarArquivoSeNecessario() {
+        guard let activeSavedFileID else { return }
+        do {
+            texto = try savedFilesStore.content(for: activeSavedFileID)
+        } catch {
+            saveAlertMessage = "Não foi possível abrir o arquivo: \(error.localizedDescription)"
+        }
     }
 
     private func abrirConfiguracoes() {
@@ -440,4 +483,5 @@ private struct MorphStageScrollContainer<Content: View>: View {
         .environment(CRTBarrelConfig())
         .environment(MorphKeyboardVisualConfig())
         .environment(CRTTextInputBridge())
+        .environment(SavedFilesStore())
 }

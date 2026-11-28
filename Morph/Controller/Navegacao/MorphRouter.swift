@@ -1,8 +1,10 @@
 import SwiftUI
 import Observation
+import Foundation
 
 enum MorphRoute: Hashable {
-    case editor
+    case editor(fileID: UUID? = nil)
+    case files
 }
 
 /// Roteador SwiftUI puro (sem UINavigationController) para que todas as telas futuras

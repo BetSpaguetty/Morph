@@ -33,11 +33,69 @@ struct RetroWindowFrameShape: Shape {
     }
 }
 
-/// Cabeçalho retrô dentro da faixa chanfrada: Home + Ajustes vazados à esquerda; relógio + bateria à direita.
+/// Contorno de pasta do SVG `borda_pasta`, redimensionado sem alterar a espessura do traço.
+struct RetroFolderFrameShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 1009.0
+        let scaleY = rect.height / 699.0
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        var outline = Path()
+        outline.move(to: point(34, 690))
+        outline.addLine(to: point(975, 684))
+        outline.addCurve(
+            to: point(996, 662),
+            control1: point(989, 690),
+            control2: point(996, 678)
+        )
+        outline.addLine(to: point(996, 114))
+        outline.addCurve(
+            to: point(975, 88),
+            control1: point(996, 99),
+            control2: point(987, 88)
+        )
+        outline.addLine(to: point(586, 88))
+        outline.addCurve(
+            to: point(562, 75),
+            control1: point(576, 88),
+            control2: point(568, 82)
+        )
+        outline.addLine(to: point(523, 22))
+        outline.addCurve(
+            to: point(499, 15),
+            control1: point(514, 15),
+            control2: point(506, 15)
+        )
+        outline.addLine(to: point(34, 15))
+        outline.addCurve(
+            to: point(13, 36),
+            control1: point(22, 15),
+            control2: point(13, 24)
+        )
+        outline.addLine(to: point(13, 668))
+        outline.addCurve(
+            to: point(34, 690),
+            control1: point(13, 681),
+            control2: point(22, 690)
+        )
+        outline.closeSubpath()
+
+        var divider = Path()
+        divider.move(to: point(8, 88))
+        divider.addLine(to: point(584, 88))
+        outline.addPath(divider)
+        return outline
+    }
+}
+
+/// Cabeçalho retrô: Início, Ajustes e Salvar à esquerda; relógio e bateria à direita.
 struct RetroHeaderBar: View {
     let metrics: RetroFrameMetrics
     var onHome: () -> Void
     var onSettings: () -> Void
+    var onSave: () -> Void
     var onTapEmptySpace: (() -> Void)? = nil
 
     private var iconSize: CGFloat { 20 * metrics.headerScale }
@@ -48,6 +106,7 @@ struct RetroHeaderBar: View {
             HStack(spacing: 4 * metrics.headerScale) {
                 headerIconButton(systemName: "house", label: "Início", action: onHome)
                 headerIconButton(systemName: "gearshape", label: "Ajustes", action: onSettings)
+                headerAssetButton(assetName: "botao_salvar", label: "Salvar", action: onSave)
             }
 
             Color.clear
@@ -72,6 +131,21 @@ struct RetroHeaderBar: View {
                 .foregroundStyle(RetroTerminalStyle.ink)
                 .padding(.horizontal, buttonPadX)
                 .frame(height: metrics.headerHeight)
+                .crtHitAdjusted()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private func headerAssetButton(assetName: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(assetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: iconSize, height: iconSize)
+                .padding(.horizontal, buttonPadX)
+                .frame(height: metrics.headerHeight)
+                .contentShape(Rectangle())
                 .crtHitAdjusted()
         }
         .buttonStyle(.plain)

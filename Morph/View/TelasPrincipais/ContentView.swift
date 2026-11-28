@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var keyboardConfig = MorphKeyboardVisualConfig()
     @State private var textInputBridge = CRTTextInputBridge()
     @State private var touchEngine = CRTMagneticTouchEngine()
+    @State private var savedFilesStore = SavedFilesStore()
 
     var body: some View {
         GeometryReader { geo in
@@ -37,6 +38,7 @@ struct ContentView: View {
                 .environment(crtConfig)
                 .environment(keyboardConfig)
                 .environment(textInputBridge)
+                .environment(savedFilesStore)
                 .compositingGroup()
                 .modifier(
                     CRTScreenEffectModifier(
@@ -80,8 +82,12 @@ struct ContentView: View {
             case nil:
                 HomeView()
                     .transition(.opacity)
-            case .editor:
-                TextView()
+            case .editor(let fileID):
+                TextView(fileID: fileID)
+                    .id(fileID)
+                    .transition(.opacity)
+            case .files:
+                FilesView()
                     .transition(.opacity)
             }
         }
