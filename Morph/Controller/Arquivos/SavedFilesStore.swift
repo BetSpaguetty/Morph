@@ -49,6 +49,10 @@ final class SavedFilesStore {
         return try String(contentsOf: fileURL(named: file.name), encoding: .utf8)
     }
 
+    func reload() {
+        loadIndex()
+    }
+
     private var folderURL: URL {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(folderName, isDirectory: true)
@@ -59,7 +63,13 @@ final class SavedFilesStore {
     }
 
     private func fileURL(named name: String) -> URL {
-        folderURL.appendingPathComponent(name)
+        let managedURL = folderURL.appendingPathComponent(name)
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(name)
+        if fileManager.fileExists(atPath: managedURL.path) || !fileManager.fileExists(atPath: documentsURL.path) {
+            return managedURL
+        }
+        return documentsURL
     }
 
     private func nextFileName() -> String {
@@ -73,14 +83,43 @@ final class SavedFilesStore {
     private func loadIndex() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: indexURL),
-              let decoded = try? decoder.decode([SavedMorphFile].self, from: data) else {
-            return
+        let decoded: [SavedMorphFile]
+        if let data = try? Data(contentsOf: indexURL),
+           let savedFiles = try? decoder.decode([SavedMorphFile].self, from: data) {
+            decoded = savedFiles
+        } else {
+            decoded = []
         }
-        files = decoded.sorted { $0.savedAt > $1.savedAt }
+
+        // Rebuild missing index entries from text files that are still on disk.
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let urls = [folderURL, documentsURL].flatMap { directory in
+            (try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+        }
+        let knownByName = Dictionary(decoded.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        files = Dictionary(urls.filter { $0.pathExtension.lowercased() == "txt" }.map { ($0.lastPathComponent, $0) }, uniquingKeysWith: { first, _ in first })
+            .values
+            .compactMap { url in
+                if let known = knownByName[url.lastPathComponent] {
+                    return known
+                }
+                guard let modifiedAt = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
+                    return nil
+                }
+                return SavedMorphFile(id: UUID(), name: url.lastPathComponent, savedAt: modifiedAt)
+            }.sorted { $0.savedAt > $1.savedAt }
+
+        if Set(files.map(\.name)) != Set(decoded.map(\.name)) {
+            try? persistIndex()
+        }
     }
 
     private func persistIndex() throws {
+        try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true, attributes: nil)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(files)
